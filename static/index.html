@@ -896,6 +896,14 @@
     .rally-watch-score strong { display: block; font-size: 15px; }
     .rally-watch-score small { display: block; color: var(--muted); margin-top: 2px; }
     .rally-watch-list { margin: 7px 0 0; padding-left: 15px; color: var(--muted); font-size: 11px; }
+    .price-levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+    .price-level-row { display: grid; grid-template-columns: 28px 64px 1fr; gap: 5px; align-items: center; font-size: 11px; padding: 3px 0; border-bottom: 1px solid rgba(39,48,60,.07); }
+    .price-level-row.strong { font-weight: 800; }
+    .price-level-row .star { color: #c98216; font-weight: 900; }
+    .price-targets { margin-top: 8px; color: var(--muted); font-size: 11px; }
+    .price-level-line-support { stroke: rgba(20, 122, 72, 0.62); stroke-dasharray: 5 4; }
+    .price-level-line-resistance { stroke: rgba(183, 55, 52, 0.62); stroke-dasharray: 5 4; }
+    .price-level-label { font-size: 10px; font-weight: 800; paint-order: stroke fill; stroke: rgba(255,255,255,.9); stroke-width: 2px; }
     .trade-entry, .trade-exit, .trade-annotation { cursor: pointer; }
     .trade-leader { stroke-width: 0.8; opacity: 0.32; }
     .trade-anchor { stroke: white; stroke-width: 1.2; opacity: 0.82; }
@@ -1251,6 +1259,11 @@
           <button id="liveResetZoom" class="mini-reset" title="Reset live zoom">Reset</button>
           <button id="liveGoNewest" class="mini-reset" title="Go to newest visible session candle">Newest</button>
           <label class="toggle" title="Show Rally Watch overlay"><input id="showLiveRally" type="checkbox" checked> Rally</label>
+          <label class="toggle" title="Show swing support/resistance"><input data-live-level-source="swing" type="checkbox" checked> Swing</label>
+          <label class="toggle" title="Show VWAP level"><input data-live-level-source="vwap" type="checkbox" checked> VWAP</label>
+          <label class="toggle" title="Show session levels"><input data-live-level-source="session" type="checkbox" checked> Session</label>
+          <label class="toggle" title="Show Bollinger levels"><input data-live-level-source="bb" type="checkbox"> BB</label>
+          <label class="toggle" title="Show previous day levels"><input data-live-level-source="prev_day" type="checkbox"> Prev</label>
           <div class="live-stream-state"><span id="liveStreamDot" class="stream-dot"></span><span id="liveTrendMeta">Stream stopped</span></div>
         </div>
       </div>
@@ -1557,6 +1570,7 @@
       ['currentPrice', 'Current price'],
       ['strategySignal', 'Strategy signal'],
       ['rallyWatch', 'Rally Watch'],
+      ['priceLevels', 'Price Levels'],
       ['bias', 'Bias'],
       ['movement', 'Possible movement'],
       ['levels', 'Levels'],
@@ -1573,6 +1587,7 @@
     ];
     const defaultLiveDisplay = Object.fromEntries(liveDisplayOptions.map(([key]) => [key, true]));
     let liveDisplay = { ...defaultLiveDisplay, ...safeJson(localStorage.getItem(liveDisplayKey), {}) };
+    let liveLevelSources = { swing: true, vwap: true, session: true, bb: false, prev_day: false };
     const defaultIndicatorSettings = {
       bb_period: 15,
       bb_std_dev: 2,
@@ -1832,7 +1847,7 @@
         shares: shareSize.value, strategy: currentStrategyId, day: currentDay,
         zoomStart, zoomEnd, liveZoomWidth, sessionFilter,
         indicatorSettings,
-        overlays: { bands: showBands.checked, vwap: showVwap.checked, macd: showMacd.checked, stoch: showStoch.checked, trades: showTrades.checked, liveRally: showLiveRally.checked }
+        overlays: { bands: showBands.checked, vwap: showVwap.checked, macd: showMacd.checked, stoch: showStoch.checked, trades: showTrades.checked, liveRally: showLiveRally.checked, liveLevelSources }
       };
     }
     function saveLastMarket() {
@@ -2109,6 +2124,9 @@
         showStoch.checked = restored.overlays.stoch !== false;
         showTrades.checked = restored.overlays.trades !== false;
         showLiveRally.checked = restored.overlays.liveRally !== false;
+        if (restored.overlays.liveLevelSources && typeof restored.overlays.liveLevelSources === 'object') {
+          liveLevelSources = { ...liveLevelSources, ...restored.overlays.liveLevelSources };
+        }
       }
       if (restored.zoomStart != null && restored.zoomEnd != null) {
         zoomStart = Number(restored.zoomStart);
@@ -2161,6 +2179,14 @@
       liveZoomOut.addEventListener('click', () => liveZoomBy(2));
       liveResetZoom.addEventListener('click', () => { liveZoomWidth = 1; liveZoomStart = 0; liveZoomEnd = 1; renderLiveInteractiveChart(); saveDashboardState(); });
       showLiveRally.addEventListener('change', () => { renderLiveInteractiveChart(); saveDashboardState(); });
+      document.querySelectorAll('[data-live-level-source]').forEach(input => {
+        input.checked = liveLevelSources[input.dataset.liveLevelSource] !== false;
+        input.addEventListener('change', () => {
+          liveLevelSources[input.dataset.liveLevelSource] = input.checked;
+          renderLiveInteractiveChart();
+          saveDashboardState();
+        });
+      });
       document.getElementById('liveGoOldest').addEventListener('click', () => liveJumpToEdge('oldest'));
       document.getElementById('liveGoNewest').addEventListener('click', () => liveJumpToEdge('newest'));
       liveCandleChart.addEventListener('wheel', event => {
@@ -2637,6 +2663,7 @@
               ],
               alerts: liveAlerts,
               rallyWatch: local.rally_watch || null,
+              priceLevels: local.price_levels || null,
               reasoning: local.reasoning || [],
               entryReason: local.entry_reason,
               exitReason: local.exit_reason,
@@ -2734,6 +2761,7 @@
       const probs = a.probabilities || {};
       const strategySignal = data.strategySignal || {};
       const rallyWatch = a.rallyWatch || {};
+      const priceLevels = a.priceLevels || {};
       const rallyBest = bestRallyWatch(rallyWatch);
       const bbMove = bbMidMoveMeta((data.bars || []).slice(-1)[0], data.bars || []);
       const tone = a.bias === 'bullish' ? 'profit' : a.bias === 'bearish' ? 'loss' : '';
@@ -2754,6 +2782,7 @@
           <p>${esc(a.tradeState || 'COMPLETE')} | Grade ${esc(a.tradeGrade || 'F')} | R/R ${fmtLevel(risk.riskReward)}</p>
         </div>`)}
         ${card('rallyWatch', rallyWatchCardHtml(rallyWatch, rallyBest))}
+        ${card('priceLevels', priceLevelsCardHtml(priceLevels))}
         ${card('bias', `
         <div class="live-card">
           <h3>Bias</h3>
@@ -2901,16 +2930,64 @@
       const tone = best.score?.state && best.score.state !== 'no_setup' ? best.direction : 'neutral';
       const reasons = (best.score?.reasons || []).slice(0, 3);
       const warnings = (best.score?.warnings || []).slice(0, 2);
+      const targets = rallyWatch.targets || {};
+      const bestTargets = best.direction === 'up' ? (targets.targets_up || []) : (targets.targets_down || []);
+      const invalidation = (targets.invalidations || []).find(item => item.direction === best.direction);
       return `
         <div class="live-card rally-watch-card ${esc(tone)}">
           <h3>Rally Watch</h3>
           <strong class="${tone === 'up' ? 'profit' : tone === 'down' ? 'loss' : ''}">${esc(rallyStateLabel(best.direction, best.score))}</strong>
+          ${bestTargets.length ? `<p>Targets: ${bestTargets.slice(0, 2).map(target => `${esc(target.label)} ${fmtLevel(target.price)} (${target.distance_pct >= 0 ? '+' : ''}${Number(target.distance_pct || 0).toFixed(2)}%)`).join(' / ')}</p>` : ''}
+          ${invalidation ? `<p>Invalidated if ${esc(invalidation.reason.toLowerCase())} ${fmtLevel(invalidation.price)}</p>` : ''}
           <div class="rally-watch-grid">
             <div class="rally-watch-score"><strong class="profit">${Number(up.score || 0)}%</strong><small>${esc(rallyStateLabel('up', up))}</small></div>
             <div class="rally-watch-score"><strong class="loss">${Number(down.score || 0)}%</strong><small>${esc(rallyStateLabel('down', down))}</small></div>
           </div>
           ${reasons.length ? `<ul class="rally-watch-list">${reasons.map(reason => `<li>${esc(reason)}</li>`).join('')}</ul>` : '<p>No rally setup yet.</p>'}
           ${warnings.length ? `<p style="margin-top:6px;">Warning: ${esc(warnings.join(' / '))}</p>` : ''}
+        </div>`;
+    }
+
+    function priceLevelSourceLabel(level = {}) {
+      const label = String(level.source || '').replace(/_/g, ' ');
+      const confluent = (level.confluent_with || []).filter(Boolean);
+      if (confluent.length > 1) return `${label} + ${confluent.filter(item => item !== level.source).slice(0, 2).map(item => String(item).replace(/_/g, ' ')).join(' + ')}`;
+      return label || 'level';
+    }
+
+    function priceLevelRow(level) {
+      const strong = Number(level.strength || 0) >= 0.85 || (level.confluent_with || []).length > 1;
+      return `<div class="price-level-row ${strong ? 'strong' : ''}">
+        <span>${esc(level.label || '')}</span>
+        <span>${fmtLevel(level.price)}</span>
+        <span>${esc(priceLevelSourceLabel(level))}${(level.confluent_with || []).length > 1 ? ' <span class="star">*</span>' : ''}</span>
+      </div>`;
+    }
+
+    function priceTargetsText(items = []) {
+      return items.slice(0, 3).map(item => {
+        const dollars = Number(item.distance_dollars || 0);
+        const pct = Number(item.distance_pct || 0);
+        return `${esc(item.label)} ${fmtLevel(item.price)} (${dollars >= 0 ? '+' : '-'}$${Math.abs(dollars).toFixed(2)}, ${pct.toFixed(2)}%)`;
+      }).join(' / ');
+    }
+
+    function priceLevelsCardHtml(priceLevels = {}) {
+      const supports = priceLevels.supports || [];
+      const resistances = priceLevels.resistances || [];
+      const invalidations = priceLevels.invalidations || [];
+      return `
+        <div class="live-card">
+          <h3>Price Levels</h3>
+          <div class="price-levels-grid">
+            <div><strong class="profit">Support</strong>${supports.length ? supports.slice(0, 4).map(priceLevelRow).join('') : '<p>No nearby support.</p>'}</div>
+            <div><strong class="loss">Resistance</strong>${resistances.length ? resistances.slice(0, 4).map(priceLevelRow).join('') : '<p>No nearby resistance.</p>'}</div>
+          </div>
+          <div class="price-targets">
+            <div>Up targets: ${priceTargetsText(priceLevels.targets_up || []) || 'n/a'}</div>
+            <div>Down targets: ${priceTargetsText(priceLevels.targets_down || []) || 'n/a'}</div>
+            ${invalidations.length ? `<div>Invalidation: ${invalidations.map(item => `${esc(item.direction)} ${fmtLevel(item.price)} ${esc(item.reason)}`).join(' / ')}</div>` : ''}
+          </div>
         </div>`;
     }
 
@@ -3572,6 +3649,7 @@
         drawBbMidTurnMarkers(bars, x, priceBottom);
         drawLiveMeasurement(bars, x, y, priceTop, priceBottom);
         drawLiveRallyWatchOverlay(bars, x, priceTop, priceBottom);
+        drawLivePriceLevelLines(y, W, margin, priceTop, priceBottom);
         drawLiveSignalMarkers(bars, x, y, priceTop, priceBottom);
         drawLiveLastPrice(bars, x, y, W, margin);
         drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, liveSlotCount, liveDrawW);
@@ -3704,6 +3782,47 @@
         <text x="${x(index) + 8}" y="${top + 22}" font-size="10" font-weight="800" fill="${up ? '#147a48' : '#b73734'}">${label} ${Number(best.score.score || 0)}%</text>
       `;
       target.appendChild(g);
+    }
+
+    function liveLevelSourceEnabled(source = '') {
+      if (source.startsWith('swing_')) return liveLevelSources.swing !== false;
+      if (source.startsWith('bb_')) return liveLevelSources.bb === true;
+      if (source === 'vwap') return liveLevelSources.vwap !== false;
+      if (source.startsWith('session_')) return liveLevelSources.session !== false;
+      if (source.startsWith('prev_day_')) return liveLevelSources.prev_day === true;
+      return true;
+    }
+
+    function drawLivePriceLevelLines(y, W, margin, top, bottom) {
+      const levels = latestLiveData?.analysis?.priceLevels;
+      if (!levels) return;
+      const all = [...(levels.supports || []), ...(levels.resistances || [])].filter(level => liveLevelSourceEnabled(String(level.source || '')));
+      const target = liveCandleChart;
+      all.forEach(level => {
+        const price = Number(level.price);
+        if (!Number.isFinite(price)) return;
+        const yy = y(price);
+        if (yy < top || yy > bottom) return;
+        const strong = Number(level.strength || 0);
+        const cls = level.level_type === 'support' ? 'price-level-line-support' : 'price-level-line-resistance';
+        const color = level.level_type === 'support' ? '#147a48' : '#b73734';
+        const lineEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        lineEl.setAttribute('x1', margin.left);
+        lineEl.setAttribute('x2', W - margin.right - 64);
+        lineEl.setAttribute('y1', yy);
+        lineEl.setAttribute('y2', yy);
+        lineEl.setAttribute('class', cls);
+        lineEl.setAttribute('stroke-width', (1 + strong * 1.6).toFixed(2));
+        lineEl.setAttribute('opacity', (0.45 + strong * 0.35).toFixed(2));
+        target.appendChild(lineEl);
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', W - margin.right - 60);
+        label.setAttribute('y', yy + 3);
+        label.setAttribute('fill', color);
+        label.setAttribute('class', 'price-level-label');
+        label.textContent = `${level.label} ${fmtLevel(price)}${(level.confluent_with || []).length > 1 ? ' *' : ''}`;
+        target.appendChild(label);
+      });
     }
 
     function drawLiveLastPrice(bars, x, y, W, margin) {

@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from config import BACKTEST_NOTIONAL
+from signals.price_levels import evaluate_price_levels
 from signals.rally_watch import evaluate_rally_watch
 
 
@@ -857,10 +858,12 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe), indicator_settings)
     higher_tf = "3m" if signal_minutes <= 1 else "5m"
     higher_bars = _compute_derived_indicators(_timeframe_bars(bars, higher_tf), indicator_settings)
+    price_levels = evaluate_price_levels(_bars_dataframe(signal_bars), timeframe)
     rally_watch = evaluate_rally_watch(
         _bars_dataframe(signal_bars),
         timeframe,
         _bars_dataframe(higher_bars) if higher_bars else None,
+        price_levels,
     ).to_dict()
     base_name = strategy_id.rsplit("_", 1)[0]
     live_label = base_name.replace("_", " ").title()
@@ -912,6 +915,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
         "signal_price": close,
         "signal_events": signal_events,
         "rally_watch": rally_watch,
+        "price_levels": price_levels.to_dict(),
         "confidence": round(confidence * 100, 1) if confidence else 0,
         "bullish_score": bullish_score,
         "bearish_score": bearish_score,

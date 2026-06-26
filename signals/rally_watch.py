@@ -10,6 +10,7 @@ from indicators.stoch_rsi import StochRSI
 from indicators.vwap import VWAP
 from models.types import SignalDirection, SignalResult
 from signals.base import Signal
+from signals.price_levels import PriceLevelsResult
 from signals.registry import register
 
 
@@ -42,6 +43,7 @@ class RallyScore:
 class RallyWatchResult:
     up: RallyScore
     down: RallyScore
+    targets: PriceLevelsResult | None
     timestamp: str
     timeframe: str
 
@@ -49,6 +51,7 @@ class RallyWatchResult:
         return {
             "up": self.up.to_dict(),
             "down": self.down.to_dict(),
+            "targets": self.targets.to_dict() if self.targets else None,
             "timestamp": self.timestamp,
             "timeframe": self.timeframe,
         }
@@ -265,13 +268,19 @@ def _score_direction(records: list[dict], direction: str, higher_records: list[d
     return RallyScore(direction, score, get_state(score), reasons[:8], list(dict.fromkeys(warnings))[:5])
 
 
-def evaluate_rally_watch(df: pd.DataFrame, timeframe: str = "1m", higher_df: pd.DataFrame | None = None) -> RallyWatchResult:
+def evaluate_rally_watch(
+    df: pd.DataFrame,
+    timeframe: str = "1m",
+    higher_df: pd.DataFrame | None = None,
+    price_levels: PriceLevelsResult | None = None,
+) -> RallyWatchResult:
     records = _safe_records(df)
     higher_records = _safe_records(higher_df)
     timestamp = str(records[-1].get("time_key") or records[-1].get("date") or "") if records else ""
     return RallyWatchResult(
         up=_score_direction(records, "up", higher_records),
         down=_score_direction(records, "down", higher_records),
+        targets=price_levels,
         timestamp=timestamp,
         timeframe=timeframe,
     )
