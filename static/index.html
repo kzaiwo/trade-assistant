@@ -191,6 +191,30 @@
     .summary-body { padding: 13px; }
     .strategy-summary tbody tr.active { background: #eef7ff; }
     .strategy-summary tbody tr { cursor: pointer; }
+    .strategy-summary th[data-sort] {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .strategy-summary th[data-sort]::after {
+      content: "";
+      display: inline-block;
+      width: 0;
+      height: 0;
+      margin-left: 6px;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      opacity: 0.32;
+      vertical-align: middle;
+    }
+    .strategy-summary th[data-sort].sort-asc::after {
+      border-bottom: 6px solid var(--muted);
+      opacity: 0.9;
+    }
+    .strategy-summary th[data-sort].sort-desc::after {
+      border-top: 6px solid var(--muted);
+      opacity: 0.9;
+    }
     .calendar-section {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -1018,7 +1042,7 @@
       <button data-session="night">Night</button>
     </div>
 
-    <details class="summary-section backtest-mode">
+    <details class="summary-section backtest-mode" open>
       <summary>
         <span class="summary-main">
           <span class="summary-title">Strategy P/L Summary</span>
@@ -1030,7 +1054,7 @@
         <h2>Entire Month By Strategy</h2>
         <div class="table-wrap">
           <table class="strategy-summary">
-            <thead><tr><th>Strategy</th><th id="dayShareHead">Day P/L</th><th id="summaryShareHead">Month P/L</th><th>Trades</th><th>Win</th><th>PF</th><th>Max DD</th></tr></thead>
+            <thead><tr><th data-sort="strategy">Strategy</th><th data-sort="dayPnl" id="dayShareHead">Day P/L</th><th data-sort="monthPnl" id="summaryShareHead">Month P/L</th><th data-sort="trades">Trades</th><th data-sort="winRate">Win</th><th data-sort="profitFactor">PF</th><th data-sort="maxDd">Max DD</th></tr></thead>
             <tbody id="strategyRows"></tbody>
           </table>
         </div>
@@ -1274,6 +1298,7 @@
     const fetchStart = document.getElementById('fetchStart');
     const fetchEnd = document.getElementById('fetchEnd');
     const fetchData = document.getElementById('fetchData');
+    const strategySummarySort = { key: 'monthPnl', dir: 'desc' };
     const liveTrend = document.getElementById('liveTrend');
     const stopLiveTrend = document.getElementById('stopLiveTrend');
     const liveStreamDot = document.getElementById('liveStreamDot');
@@ -1348,7 +1373,14 @@
     const fmtTime = t => t.slice(11, 16);
     const fmtLevel = v => v == null ? 'n/a' : Number(v).toFixed(2);
     const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-    const shares = () => Math.max(1, Number(shareSize.value || DATA.defaultShares || 800));
+    const estimatedDefaultShares = (bars = DATA?.bars || []) => {
+      for (let i = bars.length - 1; i >= 0; i--) {
+        const close = Number(bars[i]?.close);
+        if (Number.isFinite(close) && close > 0) return Math.max(1, Math.floor(100000 / close));
+      }
+      return 1;
+    };
+    const shares = () => Math.max(1, Number(shareSize.value || DATA.defaultShares || estimatedDefaultShares()));
     const currentStrategy = () => DATA.strategies.find(s => s.id === currentStrategyId) || DATA.strategies[0];
     function strategyBaseId(strategyId) {
       return String(strategyId || '').replace(/_(?:\d+m|1d|1w)$/i, '');
@@ -1400,7 +1432,7 @@
         bars: [],
         strategies,
         defaultStrategy: 'bb_squeeze_1m',
-        defaultShares: 800,
+        defaultShares: 1,
         cache: { file: 'Not loaded', symbol: 'US.INTC', ktype: '1m', rows: 0 }
       };
     }
@@ -1553,6 +1585,7 @@
         };
       });
       normalized.defaultStrategy = payload.defaultStrategy || normalized.strategies[0]?.id || 'empty';
+      normalized.defaultShares = Number(payload.defaultShares || payload.default_shares || estimatedDefaultShares(normalized.bars));
       if (!normalized.days.length) normalized.days = ['No data'];
       if (!normalized.strategies.length) normalized.strategies = emptyBacktestPayload().strategies;
       return normalized;
@@ -1917,8 +1950,7 @@
       measurePoints = [];
       zoomStart = 0;
       zoomEnd = 1;
-      const defaultShares = Number(DATA.defaultShares || shares());
-      shareSize.value = defaultShares > 10000 ? shares() : defaultShares;
+      shareSize.value = Math.max(1, Number(DATA.defaultShares || estimatedDefaultShares(DATA.bars)));
       const cache = DATA.cache || {};
       updateHeaderStatus();
       render();
@@ -4318,16 +4350,58 @@
       ].map(([k, v, cls]) => `<span class="summary-chip"><strong>${k}</strong>&nbsp;<span class="${cls}">${v}</span></span>`).join('');
       document.getElementById('dayShareHead').textContent = `${currentDay} P/L (${sh} sh)`;
       document.getElementById('summaryShareHead').textContent = `Month P/L (${sh} sh)`;
-      document.getElementById('strategyRows').innerHTML = DATA.strategies.map(s => {
+      const rows = DATA.strategies.map(s => {
         const st = safeStats(s.stats);
         const pf = Number.isFinite(st.profit_factor) ? st.profit_factor.toFixed(2) : 'inf';
         const dayPnl = (s.trades || []).filter(t => t.day === currentDay).reduce((sum, t) => sum + t.pnl, 0);
+        return {
+          strategy: s,
+          stats: st,
+          pf,
+          dayPnl,
+          sortValues: {
+            strategy: String(s.label || s.id || ''),
+            dayPnl: dayPnl * sh,
+            monthPnl: st.pnl_per_share * sh,
+            trades: st.trades,
+            winRate: st.win_rate,
+            profitFactor: Number.isFinite(st.profit_factor) ? st.profit_factor : Number.MAX_SAFE_INTEGER,
+            maxDd: st.max_dd
+          }
+        };
+      });
+      rows.sort((a, b) => {
+        const dir = strategySummarySort.dir === 'asc' ? 1 : -1;
+        const av = a.sortValues[strategySummarySort.key];
+        const bv = b.sortValues[strategySummarySort.key];
+        const primary = typeof av === 'string'
+          ? av.localeCompare(String(bv || ''))
+          : Number(av || 0) - Number(bv || 0);
+        if (primary !== 0) return primary * dir;
+        return Number(b.sortValues.monthPnl || 0) - Number(a.sortValues.monthPnl || 0);
+      });
+      document.querySelectorAll('.strategy-summary th[data-sort]').forEach(th => {
+        th.classList.toggle('sort-asc', th.dataset.sort === strategySummarySort.key && strategySummarySort.dir === 'asc');
+        th.classList.toggle('sort-desc', th.dataset.sort === strategySummarySort.key && strategySummarySort.dir === 'desc');
+        th.onclick = () => {
+          const key = th.dataset.sort;
+          if (strategySummarySort.key === key) {
+            strategySummarySort.dir = strategySummarySort.dir === 'asc' ? 'desc' : 'asc';
+          } else {
+            strategySummarySort.key = key;
+            strategySummarySort.dir = key === 'strategy' ? 'asc' : 'desc';
+          }
+          renderStrategySummary();
+        };
+      });
+      document.getElementById('strategyRows').innerHTML = rows.map(({ strategy: s, stats: st, pf, dayPnl }) => {
+        const winCls = st.win_rate < 50 ? 'loss' : '';
         return `<tr data-strategy="${s.id}" class="${s.id === currentStrategyId ? 'active' : ''}">
           <td><strong>${s.label}</strong><br><span class="muted">${s.description}</span></td>
           <td class="${dayPnl >= 0 ? 'profit' : 'loss'}">${fmtMoney(dayPnl * sh)}<span class="subvalue">${fmtMoney(dayPnl)}/sh</span></td>
           <td class="${st.pnl_per_share >= 0 ? 'profit' : 'loss'}">${fmtMoney(st.pnl_per_share * sh)}<span class="subvalue">${fmtMoney(st.pnl_per_share)}/sh</span></td>
           <td>${st.trades}</td>
-          <td>${st.win_rate.toFixed(1)}%</td>
+          <td class="${winCls}">${st.win_rate.toFixed(1)}%</td>
           <td>${pf}</td>
           <td class="loss">${fmtMoney(st.max_dd)}</td>
         </tr>`;

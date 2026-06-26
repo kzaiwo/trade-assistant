@@ -13,12 +13,20 @@ ROOT = Path(__file__).resolve().parent
 DATA_ROOT = (ROOT / "../_trade_data").resolve()
 RESULTS_PATH = ROOT / "results/backtest_summary.json"
 SYMBOLS = ["AAPL", "TSLA", "MU", "INTC"]
-STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "mean_reversion"]
+STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close", "mean_reversion"]
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "60m"]
 BARS_CACHE: dict[tuple[str, str, str, str], tuple[list[dict], Path]] = {}
 BB_MID_FLAT_TOLERANCE = 0.001
 BB_MID_FIRST_ENTRY_TIME = "09:45"
 BB_MID_LAST_ENTRY_TIME = "15:10"
+BB_MID_ENTRY_FLAT_TOLERANCE = {
+    "1m": 0.0003,
+    "3m": 0.0005,
+    "5m": 0.0005,
+    "15m": 0.0008,
+    "30m": 0.0008,
+    "60m": 0.001,
+}
 
 
 def _plain_symbol(value: str) -> str:
@@ -189,6 +197,22 @@ def _num(value, default: float | None = None):
         return default
 
 
+def _minutes_from_time(value: str) -> int | None:
+    try:
+        hour, minute = str(value)[:5].split(":")
+        return int(hour) * 60 + int(minute)
+    except (TypeError, ValueError):
+        return None
+
+
+def _default_shares_for_bars(bars: list[dict]) -> int:
+    for bar in reversed(bars):
+        close = _num(bar.get("close"))
+        if close is not None and close > 0:
+            return max(1, int(BACKTEST_NOTIONAL // close))
+    return 1
+
+
 def _session_matches(bar: dict, session: str) -> bool:
     if session == "all":
         return True
@@ -239,6 +263,13 @@ def _bb_mid_flat(bar: dict, prev: dict | None) -> bool:
     slope = _bb_mid_slope(bar, prev)
     close = _num(bar.get("close"))
     return slope is not None and close is not None and abs(slope) <= close * BB_MID_FLAT_TOLERANCE
+
+
+def _bb_mid_entry_flat(bar: dict, prev: dict | None, timeframe: str) -> bool:
+    slope = _bb_mid_slope(bar, prev)
+    close = _num(bar.get("close"))
+    tolerance = BB_MID_ENTRY_FLAT_TOLERANCE.get(timeframe, 0.0005)
+    return slope is not None and close is not None and abs(slope) / close <= tolerance
 
 
 def _body_side_ratios(bar: dict) -> tuple[float, float]:
@@ -468,7 +499,7 @@ def _signal_components(bar: dict, prev: dict | None, bars: list[dict], index: in
 
 def _fast_signal(strategy_id: str, bar: dict, prev: dict | None, bars: list[dict], index: int) -> tuple[str | None, float, str]:
     base = strategy_id.rsplit("_", 1)[0]
-    if base == "bb_mid_cross":
+    if base in {"bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close"}:
         timeframe = strategy_id.rsplit("_", 1)[-1]
         prev_prev = bars[index - 2] if index >= 2 else None
         return _bb_mid_cross_signal(bar, prev, prev_prev, bars, index, timeframe)
@@ -654,11 +685,21 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
     trades = []
     next_id = start_id
     prev = None
-    is_mid_cross_strategy = strategy_id.startswith("bb_mid_cross_")
+    is_mid_cross_strategy = strategy_id.startswith("bb_mid_cross_") or strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
+    is_mid_no_choppy_strategy = strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
+    is_mid_no_choppy_exit_strategy = strategy_id.startswith("bb_mid_no_choppy_exit_")
+    is_early_close_strategy = strategy_id.startswith("bb_mid_no_choppy_exit_early_close_")
+    timeframe = strategy_id.rsplit("_", 1)[-1]
     cooldown = 0 if is_mid_cross_strategy else (6 if strategy_id.endswith("_1m") else 3)
     max_trades_per_day = None if is_mid_cross_strategy else (8 if strategy_id.endswith("_1m") else 4)
     last_exit_index = -10_000
     trades_by_day: dict[str, int] = {}
+    final_minute_by_day: dict[str, int] = {}
+    for item in bars:
+        item_time = _minutes_from_time(str(item.get("time_key", ""))[11:16])
+        item_day = str(item.get("date") or str(item.get("time_key", ""))[:10])
+        if item_time is not None:
+            final_minute_by_day[item_day] = max(final_minute_by_day.get(item_day, item_time), item_time)
 
     def close_position(exit_price: float, exit_time: str, reason: str) -> None:
         nonlocal position, next_id, last_exit_index
@@ -689,7 +730,8 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
         position = None
 
     for index, bar in enumerate(bars):
-        side, confidence, reason = _fast_signal(strategy_id, bar, prev, bars, index)
+        prev_bar = prev
+        side, confidence, reason = _fast_signal(strategy_id, bar, prev_bar, bars, index)
         prev = bar
         price = _num(bar.get("close"))
         if price is None or price <= 0:
@@ -697,11 +739,22 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
         time_key = str(bar.get("time_key"))
         day = str(bar.get("date") or time_key[:10])
         final_bar = _is_final_bar(bars, index)
+        minute_of_day = _minutes_from_time(time_key[11:16])
+        early_close_bar = bool(
+            is_early_close_strategy
+            and minute_of_day is not None
+            and day in final_minute_by_day
+            and minute_of_day >= final_minute_by_day[day] - 15
+        )
+        if early_close_bar:
+            if position is not None:
+                close_position(price, time_key, "session_end_early")
+            continue
         if side is None:
             if position is not None and final_bar:
                 close_position(price, time_key, "session_end")
             continue
-        is_mid_cross = strategy_id.startswith("bb_mid_cross_")
+        is_mid_cross = strategy_id.startswith("bb_mid_cross_") or strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
         if is_mid_cross and time_key[11:16] > BB_MID_LAST_ENTRY_TIME:
             if position is not None and final_bar:
                 close_position(price, time_key, "session_end")
@@ -710,6 +763,8 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             if is_mid_cross and time_key[11:16] < BB_MID_FIRST_ENTRY_TIME:
                 continue
             if is_mid_cross and not reason.startswith("Initial trend-side") and _is_choppy_around_mid(bars, index):
+                continue
+            if is_mid_no_choppy_strategy and _bb_mid_entry_flat(bar, prev_bar, timeframe):
                 continue
             if final_bar:
                 continue
@@ -734,7 +789,13 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             continue
         if index - position["entryIndex"] < cooldown:
             continue
+        if is_mid_no_choppy_exit_strategy and _bb_mid_entry_flat(bar, prev_bar, timeframe):
+            if final_bar:
+                close_position(price, time_key, "session_end")
+            continue
         close_position(price, time_key, "opposite_signal")
+        if is_mid_no_choppy_strategy and _bb_mid_entry_flat(bar, prev_bar, timeframe):
+            continue
         if not final_bar and (max_trades_per_day is None or trades_by_day.get(day, 0) < max_trades_per_day):
             position = {
                 "side": side,
@@ -759,6 +820,9 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": "VWAP Bounce",
         "macd_cross": "MACD Cross",
         "bb_mid_cross": "Bollinger Midline Cross",
+        "bb_mid_2_no_choppy": "Bollinger Midline Cross No Choppy",
+        "bb_mid_no_choppy_exit": "Bollinger Midline Cross No Choppy Exit",
+        "bb_mid_no_choppy_exit_early_close": "Bollinger Midline Cross No Choppy Exit Early Close",
         "mean_reversion": "Mean Reversion",
     }
     descriptions = {
@@ -768,6 +832,9 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": "Trades VWAP reclaim or rejection only when volume confirms the move.",
         "macd_cross": "Trades MACD line/signal crossovers confirmed by histogram direction.",
         "bb_mid_cross": "Trades BB middle-line crosses only when the midline direction confirms and anti-chop filters allow entry.",
+        "bb_mid_2_no_choppy": "Same BB middle-line strategy, but blocks new entries when BB mid is flat while still allowing exits.",
+        "bb_mid_no_choppy_exit": "Same BB middle-line strategy, but blocks both new entries and opposite exits while BB mid is flat.",
+        "bb_mid_no_choppy_exit_early_close": "Same no-choppy-exit strategy, but closes open positions 15 minutes before the selected session ends.",
         "mean_reversion": "Trades Bollinger Band mean reversion only when momentum confirms the band touch.",
     }
     rule_notes = {
@@ -777,6 +844,9 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": "Looks for price reclaiming VWAP for longs or rejecting VWAP for shorts, with current volume at least 1.05x the recent average.",
         "macd_cross": "Looks for MACD crossing above signal with positive histogram for longs, or crossing below signal with negative histogram for shorts.",
         "bb_mid_cross": "Looks for price crossing the Bollinger middle line with BB mid slope confirmation. It blocks repeated flat midline flips and tight bandwidth unless bands are expanding.",
+        "bb_mid_2_no_choppy": "Uses the BB midline cross logic, then skips fresh entries when BB mid slope is flat for the selected timeframe. Existing positions can still exit on opposite signals.",
+        "bb_mid_no_choppy_exit": "Uses the BB midline cross logic, then skips fresh entries and ignores opposite exits when BB mid slope is flat for the selected timeframe.",
+        "bb_mid_no_choppy_exit_early_close": "Uses the no-choppy-exit logic, then forces any open position closed 15 minutes before the selected session's last bar.",
         "mean_reversion": "Requires a Bollinger Band squeeze signal plus same-direction confirmation from StochRSI, VWAP, or MACD.",
     }
     strategy_notes = {
@@ -786,6 +856,9 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": ["Entry rules: buy when price reclaims VWAP from below on confirming volume; sell when price rejects VWAP from above on confirming volume.", "Exit rules: close or reverse when the opposite VWAP reclaim or rejection appears after cooldown.", "Filters: requires current volume above the rolling average volume threshold and uses cooldown.", "Best conditions: works best when VWAP is acting as an intraday control level.", "Weaknesses: can be noisy around VWAP when volume is uneven or price is range-bound."],
         "macd_cross": ["Entry rules: buy when MACD crosses above signal with positive histogram; sell when MACD crosses below signal with negative histogram.", "Exit rules: close or reverse when the opposite MACD crossover appears after cooldown.", "Filters: requires histogram to confirm the crossover direction and uses cooldown.", "Best conditions: works best when momentum is cleanly shifting after consolidation.", "Weaknesses: lags fast reversals and can whipsaw in low-volatility chop."],
         "bb_mid_cross": ["Entry rules: when no position is open, enter long if the close is above BB mid and BB mid is sloping up; enter short if the close is below BB mid and BB mid is sloping down.", "Entry rules: when a position is open, close and reverse on the opposite BB mid cross with slope confirmation.", "Filters: do not open a new position before 09:45.", "Filters: if BB mid is flat on the current candle, wait for the next candle.", "Filters: blocks fresh entries during repeated flat midline flips and tight bandwidth unless bands are expanding; no cooldown or daily trade cap is applied.", "Best conditions: works best when price is rotating through BB mid as a new directional move starts.", "Weaknesses: can still whipsaw near the midline if slope changes are tiny and volatility has not expanded."],
+        "bb_mid_2_no_choppy": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit rules: existing positions may still close on opposite BB midline signals even when BB mid is flat.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: helps compare whether skipping flat-mid entries reduces whipsaw on choppy days.", "Weaknesses: may miss profitable early turns that begin while BB mid is still flattening."],
+        "bb_mid_no_choppy_exit": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit filter: if BB mid slope is flat, ignore opposite signals and keep holding the current position.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: tests whether holding through flat-mid noise improves trend capture.", "Weaknesses: may hold losers longer when the flat period is a real reversal forming."],
+        "bb_mid_no_choppy_exit_early_close": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit filter: if BB mid slope is flat, ignore opposite signals and keep holding the current position.", "Time exit: close any open position 15 minutes before the selected session ends.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: compares whether avoiding the final 15 minutes reduces close-driven noise.", "Weaknesses: can miss late trend continuation into the close."],
         "mean_reversion": ["Entry rules: buy when a lower-band squeeze aligns with StochRSI, VWAP, or MACD confirmation; sell when the upper-band version aligns.", "Exit rules: close or reverse when the composite setup flips direction after cooldown.", "Filters: requires a Bollinger squeeze signal plus at least one same-direction momentum or VWAP confirmation.", "Best conditions: works best in ranging markets where stretched moves snap back with confirmation.", "Weaknesses: can miss simple reversals with no confirmation and can fight strong breakouts."],
     }
     entry_rules = {
@@ -795,6 +868,9 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": [["VWAP reclaim/reject", "Previous close was below VWAP, current close reclaims VWAP on volume.", "Previous close was above VWAP, current close rejects VWAP on volume."]],
         "macd_cross": [["MACD crossover", "MACD crosses above signal and histogram is positive.", "MACD crosses below signal and histogram is negative."]],
         "bb_mid_cross": [["BB midline cross", "Close crosses above BB mid with midline slope turning up on 1m, or majority body above BB mid with rising non-flat midline on higher timeframes.", "Close crosses below BB mid with midline slope turning down on 1m, or majority body below BB mid with falling non-flat midline on higher timeframes."]],
+        "bb_mid_2_no_choppy": [["BB midline cross + flat-entry block", "Same long signal as BB midline cross, skipped for new entries when BB mid is flat.", "Same short signal as BB midline cross, skipped for new entries when BB mid is flat."]],
+        "bb_mid_no_choppy_exit": [["BB midline cross + flat hold block", "Same long signal as BB midline cross, skipped for new entries and ignored for exits when BB mid is flat.", "Same short signal as BB midline cross, skipped for new entries and ignored for exits when BB mid is flat."]],
+        "bb_mid_no_choppy_exit_early_close": [["BB midline cross + flat hold + early close", "Same long signal as no-choppy-exit, with open positions closed 15 minutes before session end.", "Same short signal as no-choppy-exit, with open positions closed 15 minutes before session end."]],
         "mean_reversion": [["Composite setup", "Lower-band squeeze plus same-direction Stoch/VWAP/MACD confirmation.", "Upper-band squeeze plus same-direction Stoch/VWAP/MACD confirmation."]],
     }
     exit_rules = {
@@ -885,6 +961,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "rows": len(bars),
                         "days": days,
                         "bars": bars,
+                        "defaultShares": _default_shares_for_bars(bars),
                         "source": "trade_data",
                         "cache": {"file": str(source), "symbol": f"US.{symbol}", "ktype": ktype, "rows": len(bars)},
                     }

@@ -26,25 +26,7 @@ class BacktestRunner(Runner):
                 result = row.strategy_result
                 if result.direction != SignalDirection.NEUTRAL and self.journal:
                     self.journal.log_signal(symbol, result, row.time_key, row.close, self.strategy.name)
-                if result.direction == SignalDirection.NEUTRAL:
-                    continue
-                if position is None:
-                    shares = self._shares_for_notional(float(row.close))
-                    position = Position(
-                        symbol=symbol,
-                        direction=result.direction,
-                        entry_price=float(row.close),
-                        shares=shares,
-                        notional_at_entry=shares * float(row.close),
-                        entry_time=row.time_key.to_pydatetime(),
-                        confidence_at_entry=float(result.confidence),
-                        strategy_name=self.strategy.name,
-                        signal_results_at_entry=result.signal_results,
-                    )
-                    for notifier in self.notifiers:
-                        notifier.send(result, symbol)
-                    continue
-                if result.direction != position.direction:
+                if position is not None and hasattr(self.strategy, "force_exit") and self.strategy.force_exit(row):
                     pnl = self._pnl(position.direction, position.entry_price, float(row.close), position.shares)
                     trade = TradeResult(
                         symbol=symbol,
@@ -65,6 +47,54 @@ class BacktestRunner(Runner):
                     all_trades.append(trade)
                     if self.journal:
                         self.journal.log_trade(trade)
+                    position = None
+                    continue
+                if result.direction == SignalDirection.NEUTRAL:
+                    continue
+                if position is None:
+                    if hasattr(self.strategy, "allows_entry") and not self.strategy.allows_entry(row, result):
+                        continue
+                    shares = self._shares_for_notional(float(row.close))
+                    position = Position(
+                        symbol=symbol,
+                        direction=result.direction,
+                        entry_price=float(row.close),
+                        shares=shares,
+                        notional_at_entry=shares * float(row.close),
+                        entry_time=row.time_key.to_pydatetime(),
+                        confidence_at_entry=float(result.confidence),
+                        strategy_name=self.strategy.name,
+                        signal_results_at_entry=result.signal_results,
+                    )
+                    for notifier in self.notifiers:
+                        notifier.send(result, symbol)
+                    continue
+                if result.direction != position.direction:
+                    if hasattr(self.strategy, "allows_exit") and not self.strategy.allows_exit(row, result):
+                        continue
+                    pnl = self._pnl(position.direction, position.entry_price, float(row.close), position.shares)
+                    trade = TradeResult(
+                        symbol=symbol,
+                        entry_time=position.entry_time,
+                        exit_time=row.time_key.to_pydatetime(),
+                        direction=position.direction,
+                        entry_price=position.entry_price,
+                        exit_price=float(row.close),
+                        shares=position.shares,
+                        notional_at_entry=position.notional_at_entry,
+                        confidence_at_entry=position.confidence_at_entry,
+                        pnl=pnl,
+                        pnl_pct=pnl / position.notional_at_entry * 100 if position.notional_at_entry else 0.0,
+                        strategy_name=self.strategy.name,
+                        signal_results_at_entry=position.signal_results_at_entry,
+                    )
+                    trades.append(trade)
+                    all_trades.append(trade)
+                    if self.journal:
+                        self.journal.log_trade(trade)
+                    if hasattr(self.strategy, "allows_entry") and not self.strategy.allows_entry(row, result):
+                        position = None
+                        continue
                     shares = self._shares_for_notional(float(row.close))
                     position = Position(
                         symbol=symbol,
