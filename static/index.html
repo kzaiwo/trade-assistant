@@ -23,7 +23,7 @@
       color: var(--ink);
       background: white;
     }
-    main { width: 100%; max-width: none; margin: 0; padding: 104px 18px 18px; }
+    main { width: 100%; max-width: none; margin: 0; padding: 126px 18px 18px; }
     header.app-header {
       position: fixed;
       top: 0;
@@ -31,8 +31,8 @@
       right: 0;
       z-index: 40;
       display: grid;
-      grid-template-columns: minmax(240px, 1fr) auto;
-      gap: 16px;
+      grid-template-columns: minmax(220px, .8fr) minmax(520px, 1.5fr) auto;
+      gap: 12px;
       align-items: center;
       padding: 12px 18px;
       border-bottom: 1px solid rgba(130, 146, 166, 0.34);
@@ -103,6 +103,23 @@
       line-height: 1.15;
     }
     .header-chip.strategy strong { max-width: 240px; }
+    .header-chip input,
+    .header-chip select {
+      width: 100%;
+      height: 24px;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--ink);
+      font-weight: 800;
+      font-size: 15px;
+      outline: none;
+    }
+    .header-chip input[type="number"] { appearance: textfield; }
+    .header-chip input[type="number"]::-webkit-outer-spin-button,
+    .header-chip input[type="number"]::-webkit-inner-spin-button { appearance: none; margin: 0; }
     .muted { color: var(--muted); font-size: 14px; }
     .controls {
       display: flex;
@@ -110,6 +127,21 @@
       gap: 10px;
       align-items: center;
       margin: 16px 0;
+    }
+    .header-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      min-width: 160px;
+    }
+    .header-actions .mode-switch { margin: 0; }
+    .header-action-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     select, button, input, label.toggle {
       height: 34px;
@@ -371,6 +403,57 @@
     .live-signal.alert { color: #8a5a00; background: #fff4d6; border-color: #e4b653; }
     .subtle-settings { opacity: .68; font-weight: 600; }
     .subtle-settings:hover { opacity: 1; }
+    .settings-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 70;
+      display: none;
+      align-items: flex-start;
+      justify-content: flex-end;
+      padding: 84px 18px 18px;
+      background: rgba(15, 23, 42, 0.24);
+    }
+    .settings-modal.open { display: flex; }
+    .settings-panel {
+      width: min(420px, calc(100vw - 28px));
+      max-height: calc(100vh - 112px);
+      overflow: auto;
+      border: 1px solid rgba(36, 56, 92, 0.16);
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+    }
+    .settings-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f9fb;
+    }
+    .settings-head strong { display: block; font-size: 15px; }
+    .settings-head span { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .settings-body { padding: 12px 14px 14px; }
+    .settings-group { margin-bottom: 14px; }
+    .settings-group h3 { margin: 0 0 8px; font-size: 13px; }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .settings-grid label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 32px;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfcfe;
+      font-size: 12px;
+      font-weight: 650;
+    }
     .build-stamp {
       color: var(--muted);
       font-size: 11px;
@@ -940,10 +1023,12 @@
       margin-top: 7px;
     }
     @media (max-width: 1080px) {
-      main { padding-top: 154px; }
+      main { padding-top: 214px; }
       header.app-header, .layout { grid-template-columns: 1fr; }
       header.app-header { gap: 10px; }
       .header-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .header-actions { align-items: stretch; }
+      .header-action-row { justify-content: flex-start; }
       .header-chip { min-height: 48px; }
       .header-chip strong { max-width: none; font-size: 14px; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -959,10 +1044,11 @@
       svg { height: 820px; }
     }
     @media (max-width: 680px) {
-      main { padding: 202px 12px 12px; }
+      main { padding: 286px 12px 12px; }
       header.app-header { padding: 10px 12px; }
       .app-title-row { justify-content: space-between; }
       .header-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .settings-grid { grid-template-columns: 1fr; }
       h1 { font-size: 18px; }
     }
   </style>
@@ -980,59 +1066,58 @@
       <div class="header-metrics" aria-label="Current dashboard context">
         <div class="header-chip">
           <span>Symbol</span>
-          <strong id="headerSymbol">INTC</strong>
+          <input id="fetchSymbol" type="text" value="INTC" aria-label="Symbol" list="cachedSymbols">
+          <datalist id="cachedSymbols"></datalist>
         </div>
         <div class="header-chip">
           <span>Timeframe</span>
-          <strong id="headerTimeframe">1m</strong>
+          <select id="fetchTimeframe" aria-label="Timeframe">
+            <option value="1m">1m</option>
+            <option value="3m">3m</option>
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="30m">30m</option>
+            <option value="60m">60m</option>
+            <option value="1d">1d</option>
+            <option value="1w">1w</option>
+          </select>
         </div>
         <div class="header-chip strategy">
           <span>Strategy</span>
-          <strong id="headerStrategy">-</strong>
+          <select id="strategySelect" aria-label="Select strategy"></select>
         </div>
         <div class="header-chip">
           <span>Shares</span>
-          <strong id="headerShares">800</strong>
+          <input id="shareSize" type="number" min="1" step="1" value="800" aria-label="Shares">
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="mode-switch" role="tablist" aria-label="Dashboard mode">
+          <button id="modeLive" class="active" type="button">Live</button>
+          <button id="modeBacktest" type="button">Backtest</button>
+        </div>
+        <div class="header-action-row">
+          <button id="liveTrend" class="live-mode">Start</button>
+          <button id="stopLiveTrend" class="live-mode">Stop</button>
+          <button id="fetchData" class="backtest-mode" hidden>Fetch</button>
+          <button id="rulesToggle" class="backtest-mode">Rules</button>
+          <button id="settingsToggle" class="mini-reset subtle-settings" title="Settings" aria-label="Settings">Settings</button>
         </div>
       </div>
     </header>
 
-    <div class="mode-switch" role="tablist" aria-label="Dashboard mode">
-      <button id="modeLive" class="active" type="button">Live</button>
-      <button id="modeBacktest" type="button">Backtest</button>
-    </div>
-
-    <div class="controls">
-      <input id="fetchSymbol" type="text" value="INTC" aria-label="Symbol" list="cachedSymbols">
-      <datalist id="cachedSymbols"></datalist>
-      <select id="fetchTimeframe" aria-label="Timeframe">
-        <option value="1m">1m</option>
-        <option value="3m">3m</option>
-        <option value="5m">5m</option>
-        <option value="15m">15m</option>
-        <option value="30m">30m</option>
-        <option value="60m">60m</option>
-        <option value="1d">1d</option>
-        <option value="1w">1w</option>
-      </select>
+    <div class="controls backtest-mode">
       <input id="fetchStart" class="backtest-mode" type="date" value="2026-06-01" aria-label="Start date">
       <input id="fetchEnd" class="backtest-mode" type="date" value="2026-06-18" aria-label="End date">
-      <button id="fetchData" class="backtest-mode" hidden>Fetch</button>
       <label class="toggle backtest-mode" hidden><input id="extendedHours" type="checkbox" checked> Extended</label>
-      <button id="liveTrend" class="live-mode" hidden>Start Stream</button>
-      <button id="stopLiveTrend" class="live-mode" hidden>Stop Stream</button>
-      <select id="strategySelect" class="backtest-mode" aria-label="Select strategy"></select>
       <select id="daySelect" class="backtest-mode" aria-label="Select day"></select>
       <button id="prevDay" class="backtest-mode">Prev Day</button>
       <button id="nextDay" class="backtest-mode">Next Day</button>
-      <label class="toggle backtest-mode">Shares <input id="shareSize" type="number" min="1" step="1" value="800" style="width: 86px; height: 24px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px;"></label>
       <label class="toggle backtest-mode"><input id="showBands" type="checkbox" checked> BB bands</label>
       <label class="toggle backtest-mode"><input id="showVwap" type="checkbox" checked> VWAP</label>
       <label class="toggle backtest-mode"><input id="showMacd" type="checkbox" checked> MACD panel</label>
       <label class="toggle backtest-mode"><input id="showStoch" type="checkbox" checked> StochRSI</label>
       <label class="toggle backtest-mode"><input id="showTrades" type="checkbox" checked> Trades</label>
-      <button id="rulesToggle" class="backtest-mode">Rules</button>
-      <button id="settingsToggle" class="mini-reset subtle-settings" title="Settings" aria-label="Settings">Settings</button>
     </div>
     <div id="recentStocks" class="controls backtest-mode" style="margin-top:8px"></div>
     <div class="controls" id="sessionControls" style="margin-top:8px">
@@ -1040,6 +1125,34 @@
       <button data-session="all">All</button><button data-session="pre">Pre</button>
       <button data-session="main">Main</button><button data-session="post">Post</button>
       <button data-session="night">Night</button>
+    </div>
+
+    <div id="settingsModal" class="settings-modal" role="dialog" aria-modal="true" aria-label="Dashboard settings">
+      <div class="settings-panel">
+        <div class="settings-head">
+          <div>
+            <strong>Display Settings</strong>
+            <span>Choose which live dashboard fields and chart overlays are visible.</span>
+          </div>
+          <button id="settingsClose" class="mini-reset" type="button">Close</button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-group">
+            <h3>Live Cards</h3>
+            <div class="settings-grid" id="liveDisplaySettings"></div>
+          </div>
+          <div class="settings-group">
+            <h3>Backtest Chart</h3>
+            <div class="settings-grid">
+              <label><input data-overlay-setting="showBands" type="checkbox"> BB bands</label>
+              <label><input data-overlay-setting="showVwap" type="checkbox"> VWAP</label>
+              <label><input data-overlay-setting="showMacd" type="checkbox"> MACD panel</label>
+              <label><input data-overlay-setting="showStoch" type="checkbox"> StochRSI panel</label>
+              <label><input data-overlay-setting="showTrades" type="checkbox"> Trades</label>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <details class="summary-section backtest-mode" open>
@@ -1071,7 +1184,7 @@
 
     <section class="live-trend-section live-mode">
       <div class="calendar-head">
-        <h2>Live 1m Trend <span class="build-stamp">signals-v2</span></h2>
+        <h2>Live Trend <span class="build-stamp">signals-v2</span></h2>
         <div class="chart-tools">
           <button id="liveZoomOut" class="icon-btn" title="Zoom out">-</button>
           <button id="liveZoomIn" class="icon-btn" title="Zoom in">+</button>
@@ -1306,11 +1419,15 @@
     const liveTrendPanel = document.getElementById('liveTrendPanel');
     const liveTrendMeta = document.getElementById('liveTrendMeta');
     const liveCandlesTable = document.getElementById('liveCandlesTable');
+    const liveCandlesDetails = document.getElementById('liveCandlesDetails');
     const liveZoomIn = document.getElementById('liveZoomIn');
     const liveZoomOut = document.getElementById('liveZoomOut');
     const liveResetZoom = document.getElementById('liveResetZoom');
     const liveMacdChart = document.getElementById('liveMacdChart');
     const liveStochChart = document.getElementById('liveStochChart');
+    const settingsModal = document.getElementById('settingsModal');
+    const settingsClose = document.getElementById('settingsClose');
+    const liveDisplaySettings = document.getElementById('liveDisplaySettings');
     const askGptLauncher = document.getElementById('askGptLauncher');
     const askGptPanel = document.getElementById('askGptPanel');
     const askGptClose = document.getElementById('askGptClose');
@@ -1345,7 +1462,7 @@
     let savedNotes = [];
     let liveStream = null;
     let liveStreamStarting = false;
-    let liveStreamDesiredSymbol = null;
+    let liveStreamDesiredKey = null;
     let liveStreamRunId = 0;
     let liveBars = [];
     let liveSignalHistory = [];
@@ -1368,6 +1485,26 @@
     const dashboardStateKey = 'trading_dashboard_state_v3';
     const recentStocksKey = 'trading_dashboard_recent_stocks';
     const lastMarketKey = 'trading_dashboard_last_market';
+    const liveDisplayKey = 'trading_dashboard_live_display_v1';
+    const liveDisplayOptions = [
+      ['currentPrice', 'Current price'],
+      ['strategySignal', 'Strategy signal'],
+      ['bias', 'Bias'],
+      ['movement', 'Possible movement'],
+      ['levels', 'Levels'],
+      ['probabilities', 'Probabilities'],
+      ['risk', 'Risk layer'],
+      ['momentum', 'Momentum'],
+      ['bbMidMove', 'BB mid move'],
+      ['indicatorStatus', 'Indicator status'],
+      ['macd', 'MACD'],
+      ['stochRsi', 'StochRSI'],
+      ['signals', 'Signals'],
+      ['source', 'Analysis source'],
+      ['candlesTable', 'Live candles table']
+    ];
+    const defaultLiveDisplay = Object.fromEntries(liveDisplayOptions.map(([key]) => [key, true]));
+    let liveDisplay = { ...defaultLiveDisplay, ...safeJson(localStorage.getItem(liveDisplayKey), {}) };
 
     const fmtMoney = v => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const fmtTime = t => t.slice(11, 16);
@@ -1381,7 +1518,21 @@
       return 1;
     };
     const shares = () => Math.max(1, Number(shareSize.value || DATA.defaultShares || estimatedDefaultShares()));
-    const currentStrategy = () => DATA.strategies.find(s => s.id === currentStrategyId) || DATA.strategies[0];
+    const currentStrategy = () => DATA.strategies.find(s => s.id === currentStrategyId) || DATA.strategies[0] || emptyBacktestPayload().strategies[0];
+    const currentLiveStrategyId = () => {
+      const id = currentStrategyId && !['empty', 'analyzing'].includes(currentStrategyId) ? currentStrategyId : '';
+      if (id) return id;
+      const timeframe = fetchTimeframe.value || '1m';
+      const preferred = `bb_mid_cross_${timeframe}`;
+      return DATA.strategies.some(s => s.id === preferred) ? preferred : `bb_mid_cross_${timeframe}`;
+    };
+    function safeJson(text, fallback) {
+      try {
+        return JSON.parse(text || '');
+      } catch {
+        return fallback;
+      }
+    }
     function strategyBaseId(strategyId) {
       return String(strategyId || '').replace(/_(?:\d+m|1d|1w)$/i, '');
     }
@@ -1701,6 +1852,32 @@
       }
       saveDashboardState();
     }
+    function saveLiveDisplaySettings() {
+      localStorage.setItem(liveDisplayKey, JSON.stringify(liveDisplay));
+    }
+    function syncOverlaySettings() {
+      document.querySelectorAll('[data-overlay-setting]').forEach(input => {
+        const source = document.getElementById(input.dataset.overlaySetting);
+        if (source) input.checked = source.checked;
+      });
+    }
+    function renderLiveDisplaySettings() {
+      if (!liveDisplaySettings) return;
+      liveDisplaySettings.innerHTML = liveDisplayOptions.map(([key, label]) => `
+        <label><input data-live-display="${esc(key)}" type="checkbox" ${liveDisplay[key] === false ? '' : 'checked'}> ${esc(label)}</label>
+      `).join('');
+      liveDisplaySettings.querySelectorAll('[data-live-display]').forEach(input => {
+        input.addEventListener('change', () => {
+          liveDisplay[input.dataset.liveDisplay] = input.checked;
+          saveLiveDisplaySettings();
+          if (latestLiveData) renderLiveTrend(latestLiveData);
+          if (input.dataset.liveDisplay === 'candlesTable' && liveCandlesDetails) {
+            liveCandlesDetails.hidden = !input.checked;
+          }
+        });
+      });
+      syncOverlaySettings();
+    }
     function setMode(mode) {
       appMode = mode === 'backtest' ? 'backtest' : 'live';
       document.body.classList.toggle('mode-live', appMode === 'live');
@@ -1713,6 +1890,12 @@
         loadTradeDataSymbols();
         render();
         scheduleBacktestFetch(120);
+      } else {
+        liveSignalHistory = [];
+        liveStrategySignal = {};
+        liveZoomStart = 0;
+        liveZoomEnd = 1;
+        startLiveStream();
       }
     }
     function updateHeaderStatus(liveData = null) {
@@ -1812,6 +1995,12 @@
         selectedTradeId = null;
         measurePoints = [];
         updateHeaderStatus();
+        if (appMode === 'live') {
+          liveSignalHistory = [];
+          liveStrategySignal = {};
+          startLiveStream();
+          return;
+        }
         render();
       });
       daySelect.addEventListener('change', () => {
@@ -1864,19 +2053,33 @@
           previewAskGptMessage(button.dataset.askGpt);
         });
       });
-      [showBands, showVwap, showMacd, showStoch, showTrades].forEach(el => el.addEventListener('change', render));
+      [showBands, showVwap, showMacd, showStoch, showTrades].forEach(el => el.addEventListener('change', () => {
+        syncOverlaySettings();
+        render();
+      }));
       shareSize.addEventListener('input', () => {
         updateHeaderStatus();
         render();
       });
       document.getElementById('settingsToggle').addEventListener('click', () => {
-        const sessionControls = document.getElementById('sessionControls');
-        const workspace = document.getElementById('workspace');
-        const hidden = sessionControls.style.display === 'none';
-        sessionControls.style.display = hidden ? 'flex' : 'none';
-        workspace.classList.toggle('collapsed', !hidden);
-        document.getElementById('workspaceToggle').textContent = hidden ? 'Collapse' : 'Expand';
+        renderLiveDisplaySettings();
+        settingsModal.classList.add('open');
       });
+      settingsClose.addEventListener('click', () => settingsModal.classList.remove('open'));
+      settingsModal.addEventListener('click', event => {
+        if (event.target === settingsModal) settingsModal.classList.remove('open');
+      });
+      document.querySelectorAll('[data-overlay-setting]').forEach(input => {
+        input.addEventListener('change', () => {
+          const source = document.getElementById(input.dataset.overlaySetting);
+          if (!source) return;
+          source.checked = input.checked;
+          saveDashboardState();
+          render();
+        });
+      });
+      renderLiveDisplaySettings();
+      if (liveCandlesDetails) liveCandlesDetails.hidden = liveDisplay.candlesTable === false;
       document.getElementById('zoomIn').addEventListener('click', () => zoomBy(0.5));
       document.getElementById('zoomOut').addEventListener('click', () => zoomBy(2));
       document.getElementById('resetZoom').addEventListener('click', () => { zoomStart = 0; zoomEnd = 1; render(); });
@@ -1927,7 +2130,13 @@
         updateHeaderStatus();
       }));
       [fetchSymbol, fetchTimeframe].forEach(node => node.addEventListener('change', () => {
-        if (appMode === 'live') startLiveStream();
+        if (appMode === 'live') {
+          liveSignalHistory = [];
+          liveStrategySignal = {};
+          liveZoomStart = 0;
+          liveZoomEnd = 1;
+          startLiveStream();
+        }
         else scheduleBacktestFetch();
       }));
       [fetchStart, fetchEnd].forEach(node => node.addEventListener('change', () => scheduleBacktestFetch()));
@@ -2140,10 +2349,13 @@
 
     async function startLiveStream() {
       const symbol = fetchSymbol.value || 'INTC';
-      if (liveStreamStarting && liveStreamDesiredSymbol === symbol) return;
-      if (liveStream && liveStreamDesiredSymbol === symbol) return;
+      const timeframe = fetchTimeframe.value || '1m';
+      const strategyId = currentLiveStrategyId();
+      const streamKey = `${symbol}|${timeframe}|${strategyId}`;
+      if (liveStreamStarting && liveStreamDesiredKey === streamKey) return;
+      if (liveStream && liveStreamDesiredKey === streamKey) return;
       liveStreamStarting = true;
-      liveStreamDesiredSymbol = symbol;
+      liveStreamDesiredKey = streamKey;
       const runId = ++liveStreamRunId;
       if (liveStream) liveStream.close();
       liveStream = null;
@@ -2156,11 +2368,11 @@
       liveLastHover = null;
       liveTrend.disabled = true;
       liveStreamDot.className = 'stream-dot on';
-      liveTrendMeta.textContent = `Connecting ${symbol} 1m stream...`;
+      liveTrendMeta.textContent = `Connecting ${symbol} ${timeframe} stream...`;
       fetch('/api/realtime/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, extended_time: true })
+        body: JSON.stringify({ symbol, extended_time: true, strategy: strategyId, ktype: timeframe })
       }).then(response => response.json()).then(result => {
         if (runId !== liveStreamRunId || appMode !== 'live') return;
         if (!result.ok) throw new Error(result.message || 'Could not start stream.');
@@ -2169,6 +2381,11 @@
         liveStream.onmessage = event => {
           if (runId !== liveStreamRunId || appMode !== 'live') return;
           const raw = JSON.parse(event.data);
+          if (raw.error) {
+            liveStreamDot.className = 'stream-dot err';
+            liveTrendMeta.textContent = raw.error;
+            return;
+          }
           if (raw.bars) liveBars = raw.bars;
           else if (raw.bar) {
             const index = liveBars.findIndex(bar => bar.time_key === raw.bar.time_key);
@@ -2182,13 +2399,13 @@
           const displayAction = action !== 'WAIT' ? action : directionalAction !== 'WAIT' ? `WATCH ${directionalAction}` : 'WAIT';
           const markerAction = action === 'LONG' ? 'BUY' : action === 'SHORT' ? 'SELL' : action;
           const liveAlerts = liveCandleAlerts(liveBars, bar);
-          const bbSlopePct = bar.bb_mid ? (Number(bar.bb_slope || 0) / Number(bar.bb_mid)) * 100 : 0;
+          const bbMove = bbMidMoveMeta(bar, liveBars);
           const trend = local.market_state === 'STRONG_BULLISH' || local.market_state === 'BULLISH' ? 'up'
             : local.market_state === 'STRONG_BEARISH' || local.market_state === 'BEARISH' ? 'down'
             : 'flat';
           const normalized = {
             symbol: raw.symbol || symbol,
-            ktype: '1m',
+            ktype: local.strategy_timeframe || timeframe,
             price: bar.close,
             candles: liveBars.length,
             bars: liveBars,
@@ -2197,7 +2414,7 @@
               bias: directionalAction === 'LONG' ? 'bullish' : directionalAction === 'SHORT' ? 'bearish' : 'neutral',
               direction: trend,
               score: `${local.bullish_score ?? 0}/${local.bearish_score ?? 0}`,
-              setup: local.setup || 'NONE',
+              setup: local.setup || currentStrategy()?.label || 'NONE',
               marketRegime1m: local.market_regime_1m || 'RANGE_BOUND',
               marketRegime5m: local.market_regime_5m || 'RANGE_BOUND',
               confidence: local.confidence ?? 0,
@@ -2213,7 +2430,9 @@
               },
               momentum: {
                 macdHist: bar.macd_hist, bbSlope: bar.bb_slope,
-                bbSlopePct,
+                bbMovePct: bbMove.move,
+                bbAvgMovePct: bbMove.avg,
+                bbMoveRatio: bbMove.ratio,
                 stochRsiK: bar.stoch_rsi_k, stochRsiD: bar.stoch_rsi_d
               },
               risk: {
@@ -2231,7 +2450,7 @@
                 sideways: local.sideways_probability
               },
               signals: [
-                { text: `Signal ${displayAction}`, tone: directionalAction === 'LONG' ? 'bullish' : directionalAction === 'SHORT' ? 'bearish' : 'neutral', tip: signalDefinition(displayAction) },
+                { text: `${currentStrategy()?.label || local.strategy || 'Strategy'} ${displayAction}`, tone: directionalAction === 'LONG' ? 'bullish' : directionalAction === 'SHORT' ? 'bearish' : 'neutral', tip: local.entry_reason || signalDefinition(displayAction) },
                 { text: `Entry ${action}`, tone: action === 'LONG' ? 'bullish' : action === 'SHORT' ? 'bearish' : 'neutral', tip: signalDefinition(`Entry ${action}`) },
                 { text: `${local.setup || 'NONE'}`, tone: local.setup?.includes('BULLISH') ? 'bullish' : local.setup?.includes('BEARISH') ? 'bearish' : 'neutral', tip: signalDefinition(local.setup || 'NONE') },
                 { text: `${local.market_regime_1m || 'RANGE_BOUND'}`, tone: local.market_regime_1m?.includes('BULL') ? 'bullish' : local.market_regime_1m?.includes('BEAR') ? 'bearish' : 'neutral', tip: signalDefinition(local.market_regime_1m || 'RANGE_BOUND') },
@@ -2251,11 +2470,11 @@
               markerAction,
               tone: directionalAction === 'LONG' ? 'bullish' : directionalAction === 'SHORT' ? 'bearish' : 'neutral',
               side: directionalAction,
-              time: bar.time_key,
-              price: bar.close,
-              strategy: 'trading_agent_spec',
+              strategy: local.strategy || currentStrategyId,
               stop: local.stop_loss,
               target: local.target_price,
+              time: local.signal_time || bar.time_key,
+              price: local.signal_price || bar.close,
               reason: local.entry_reason || (local.reasoning || []).join(' '),
               exitReason: local.exit_reason
             }
@@ -2296,7 +2515,7 @@
       liveStream = null;
       await fetch('/api/realtime/stop', { method: 'POST' }).catch(() => {});
       liveStreamStarting = false;
-      liveStreamDesiredSymbol = null;
+      liveStreamDesiredKey = null;
       liveTrend.disabled = false;
       liveTrend.textContent = 'Start Stream';
       if (!options.keepMessage) {
@@ -2322,30 +2541,37 @@
       const momentum = a.momentum || {};
       const probs = a.probabilities || {};
       const strategySignal = data.strategySignal || {};
+      const bbMove = bbMidMoveMeta((data.bars || []).slice(-1)[0], data.bars || []);
       const tone = a.bias === 'bullish' ? 'profit' : a.bias === 'bearish' ? 'loss' : '';
+      const card = (key, html) => liveDisplay[key] === false ? '' : html;
       liveStreamDot.className = 'stream-dot on';
       liveTrendMeta.textContent = `${data.symbol} ${data.ktype} | $${fmtLevel(data.price)} | ${data.candles} candles | ${a.asOf || 'n/a'}`;
       liveTrendPanel.innerHTML = `
+        ${card('currentPrice', `
         <div class="live-card">
           <h3>Current Price</h3>
           <strong class="price-now">$${fmtLevel(data.price)}</strong>
           <p>${esc(data.symbol || '')} | ${esc(a.asOf || '')}</p>
-        </div>
+        </div>`)}
+        ${card('strategySignal', `
         <div class="live-card">
           <h3>Strategy Signal</h3>
           <strong><span class="strategy-signal ${esc(strategySignal.tone || 'neutral')}">${esc(strategySignal.action || 'WAIT')}</span></strong>
           <p>${esc(a.tradeState || 'COMPLETE')} | Grade ${esc(a.tradeGrade || 'F')} | R/R ${fmtLevel(risk.riskReward)}</p>
-        </div>
+        </div>`)}
+        ${card('bias', `
         <div class="live-card">
           <h3>Bias</h3>
           <strong class="${tone}">${esc(a.bias || 'neutral')} ${a.confidence || 0}%</strong>
           <p>${esc(a.direction || 'range')} | bull/bear ${esc(a.score ?? '0/0')}.</p>
-        </div>
+        </div>`)}
+        ${card('movement', `
         <div class="live-card">
           <h3>Possible Movement</h3>
           <p>${esc(a.possibleMovement || 'No scenario available yet.')}</p>
           <p style="margin-top: 6px;">ATR ${fmtLevel(risk.atr14)} | 5m expected range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
-        </div>
+        </div>`)}
+        ${card('levels', `
         <div class="live-card">
           <h3>Levels</h3>
           <div class="live-levels">
@@ -2362,47 +2588,63 @@
             <div>Target <span>${fmtLevel(levels.target)}</span></div>
             <div>Invalid <span>${fmtLevel(levels.invalidation)}</span></div>
           </div>
-        </div>
+        </div>`)}
+        ${card('probabilities', `
         <div class="live-card">
           <h3>Probabilities</h3>
           <p>Bull cont ${esc(probs.bullishContinuation ?? 0)}% | Bear cont ${esc(probs.bearishContinuation ?? 0)}%</p>
           <p>Bull rev ${esc(probs.bullishReversal ?? 0)}% | Bear rev ${esc(probs.bearishReversal ?? 0)}% | Chop ${esc(probs.sideways ?? 0)}%</p>
-        </div>
+        </div>`)}
+        ${card('risk', `
         <div class="live-card">
           <h3>Risk Layer</h3>
           <strong class="${risk.passed ? 'profit' : 'loss'}" title="${esc(signalDefinition('Risk Layer'))}">${risk.passed ? 'PASS' : 'WAIT'}</strong>
           <p>Position ${esc(risk.positionSize ?? 0)}% | ATR ${fmtLevel(risk.atr14)} | 5m range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
-        </div>
+        </div>`)}
+        ${card('momentum', `
         <div class="live-card">
           <h3>Momentum</h3>
-          <p>MACD hist ${esc(momentum.macdHist ?? 'n/a')} | BB slope ${esc(momentum.bbSlope ?? 'n/a')} (${fmtLevel(momentum.bbSlopePct)}%)</p>
+          <p>MACD hist ${esc(momentum.macdHist ?? 'n/a')} | BB mid ${fmtPct(momentum.bbMovePct)}</p>
+          <p>BB avg ${fmtPct(momentum.bbAvgMovePct)} | ${Number.isFinite(momentum.bbMoveRatio) ? `${momentum.bbMoveRatio.toFixed(1)}x avg` : 'n/a'}</p>
           <p>StochRSI ${esc(momentum.stochRsiK ?? 'n/a')} / ${esc(momentum.stochRsiD ?? 'n/a')}</p>
-        </div>
+        </div>`)}
+        ${card('bbMidMove', `
+        <div class="live-card">
+          <h3>BB Mid Move</h3>
+          <strong class="${bbMove.big ? 'profit' : ''}">${fmtPct(bbMove.move)}</strong>
+          <p>Session avg ${fmtPct(bbMove.avg)} | ${Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x avg` : 'n/a'}${bbMove.big ? ' | big move' : ''}</p>
+        </div>`)}
+        ${card('indicatorStatus', `
         <div class="live-card">
           <h3>Indicator Status</h3>
           <div class="indicator-line">${liveIndicatorStatusHtml(data)}</div>
-        </div>
+        </div>`)}
+        ${card('macd', `
         <div class="live-card">
           <h3>MACD</h3>
           <strong class="${Number(momentum.macdHist || 0) >= 0 ? 'profit' : 'loss'}">${fmtLevel(momentum.macdHist)}</strong>
           <p>Histogram. Positive favors upside momentum; negative favors downside momentum.</p>
-        </div>
+        </div>`)}
+        ${card('stochRsi', `
         <div class="live-card">
           <h3>StochRSI</h3>
           <strong>${fmtLevel(momentum.stochRsiK)} / ${fmtLevel(momentum.stochRsiD)}</strong>
           <p>%K / %D. Watch crosses near 20 and 80 for exhaustion or continuation clues.</p>
-        </div>
+        </div>`)}
+        ${card('signals', `
         <div class="live-card live-signals-card">
           <h3>Signals</h3>
           <div class="live-signals">${(a.signals || []).map(s => signalChipHtml(s)).join('') || '<span class="live-signal neutral" title="No directional or entry signal is active.">Signal WAIT</span>'}</div>
           <p style="margin-top: 7px;">${esc(a.entryReason || (a.reasoning || []).slice(0, 3).join(' '))}</p>
           <p style="margin-top: 5px;">${esc(a.exitReason || '')}</p>
-        </div>
+        </div>`)}
+        ${card('source', `
         <div class="live-card">
           <h3>Analysis Source</h3>
           <p>${esc(a.note || 'Rule-based local indicator read. GPT is not analyzing these candles.')}</p>
-        </div>
+        </div>`)}
       `;
+      if (liveCandlesDetails) liveCandlesDetails.hidden = liveDisplay.candlesTable === false;
     }
 
     function liveIndicatorStatusHtml(data) {
@@ -2422,7 +2664,7 @@
         ema: haystack.includes('ema')
       };
       const rows = [
-        ['BB', `mid ${fmtLevel(bar.bb_mid)} · slope ${fmtLevel(bar.bb_slope)}`, used.bb],
+        ['BB', `mid ${fmtLevel(bar.bb_mid)} · move ${bbMidMoveText(bar, data.bars || [])}`, used.bb],
         ['MACD', `hist ${fmtLevel(bar.macd_hist)}`, used.macd],
         ['StochRSI', `${fmtLevel(bar.stoch_rsi_k)} / ${fmtLevel(bar.stoch_rsi_d)}`, used.stoch],
         ['VWAP', fmtLevel(bar.vwap), used.vwap],
@@ -2514,12 +2756,13 @@
         const pct = prev?.close ? (delta / Number(prev.close)) * 100 : 0;
         const alerts = liveCandleAlerts(liveBars, b);
         const signal = liveSignalForBar(b);
-        const slopePct = b.bb_mid ? (Number(b.bb_slope || 0) / Number(b.bb_mid)) * 100 : 0;
+        const bbMove = bbMidMoveMeta(b, liveBars);
+        const bbMoveLabel = `${fmtPct(bbMove.move)} / ${Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x` : 'n/a'}`;
         const tip = [
           `${b.time_key}`,
           `O ${fmtLevel(b.open)} H ${fmtLevel(b.high)} L ${fmtLevel(b.low)} C ${fmtLevel(b.close)}`,
           `MACD hist ${fmtLevel(b.macd_hist)}; StochRSI ${fmtLevel(b.stoch_rsi_k)} / ${fmtLevel(b.stoch_rsi_d)}`,
-          `BB slope ${fmtLevel(b.bb_slope)} (${fmtLevel(slopePct)}%)`,
+          `BB mid move ${bbMidMoveText(b, liveBars)}`,
           signal ? `Signal: ${signal.action || signal.side}. ${signal.reason || ''} ${signal.exitReason || ''}` : 'Signal: none on this candle.',
           alerts.length ? `Alerts: ${alerts.map(a => a.detail).join(' ')}` : 'Alerts: none.'
         ].join('\n');
@@ -2531,13 +2774,13 @@
           <td>${fmtLevel(b.bb_mid)}</td><td>${fmtLevel(b.vwap)}</td>
           <td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td>
           <td>${b.volume || 0}</td>
-          <td>${fmtLevel(b.bb_slope)} / ${fmtLevel(slopePct)}%</td>
+          <td class="${bbMove.big ? 'profit' : ''}">${bbMoveLabel}</td>
           <td>${signal ? esc(signal.action || signal.side || '') : ''}</td>
           <td>${alerts.map(a => `<span class="live-signal alert" title="${esc(a.detail)}">${esc(a.label)}</span>`).join(' ')}</td>
         </tr>`;
       }).join('');
       liveCandlesTable.innerHTML = `<table>
-        <thead><tr><th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Delta</th><th>%</th><th>BB Mid</th><th>VWAP</th><th>MACD</th><th>K</th><th>D</th><th>Vol</th><th>BB Slope/%</th><th>Signal</th><th>Alerts</th></tr></thead>
+        <thead><tr><th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Delta</th><th>%</th><th>BB Mid</th><th>VWAP</th><th>MACD</th><th>K</th><th>D</th><th>Vol</th><th>BB Mid %</th><th>Signal</th><th>Alerts</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     }
@@ -3022,17 +3265,26 @@
         return;
       }
 
-      const W = Math.max(1000, Math.round(liveCandleChart.getBoundingClientRect().width || 1000));
+      const liveRect = liveCandleChart.getBoundingClientRect();
+      const liveSectionWidth = liveCandleChart.closest('.live-trend-section')?.getBoundingClientRect().width || 0;
+      const W = Math.max(1000, Math.round(liveRect.width || liveSectionWidth || window.innerWidth || 1000));
       const H = 920;
       liveCandleChart.setAttribute('viewBox', `0 0 ${W} ${H}`);
       const margin = { left: 64, right: 72, top: 24, bottom: 34 };
       const plotW = W - margin.left - margin.right;
-      const liveSlotCount = Math.max(80, bars.length);
-      const liveDrawW = Math.min(plotW, liveSlotCount * 9);
+      const liveSlotCount = bars.length;
+      const liveDrawW = plotW;
       const priceTop = 30, priceBottom = 500;
       const macdTop = 536, macdBottom = 675;
       const stochTop = 710, stochBottom = 835;
       const prices = bars.flatMap(b => [b.high, b.low, b.bb_upper, b.bb_lower, b.vwap]).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number);
+      if (!prices.length) {
+        window.__codexLiveSvgTarget = liveCandleChart;
+        text(70, 60, 'Live candles loading', 'axis-label');
+        window.__codexLiveSvgTarget = null;
+        renderLiveCandlesTable();
+        return;
+      }
       const pMin = Math.min(...prices), pMax = Math.max(...prices);
       const pad = (pMax - pMin) * 0.08 || 1;
       const xMax = Math.max(1, liveSlotCount - 1);
@@ -3047,13 +3299,6 @@
       withLiveSvg(() => {
         rect(margin.left, priceTop, plotW, priceBottom - priceTop, 'panel-bg');
         drawGrid(x, y, bars, pMin - pad, pMax + pad, priceTop, priceBottom, 'Live Price', W, margin);
-        const upper = bars.map((b, i) => [i, b.bb_upper]);
-        const lower = bars.map((b, i) => [i, b.bb_lower]).reverse();
-        const area = [...upper, ...lower].filter(p => p[1] !== null && p[1] !== undefined);
-        if (area.length) {
-          const d = area.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(2)},${y(p[1]).toFixed(2)}`).join(' ') + ' Z';
-          addPath(d, 'bb-band');
-        }
         addPath(pathFor(bars.map((b, i) => [i, b.bb_upper]), x, y), 'bb-upper');
         addPath(pathFor(bars.map((b, i) => [i, b.bb_lower]), x, y), 'bb-lower');
         addPath(pathFor(bars.map((b, i) => [i, b.vwap]), x, y), 'vwap-line');
@@ -3262,7 +3507,7 @@
         const num = (v, d = 2) => v === null || v === undefined ? '-' : Number(v).toFixed(d);
         const alerts = liveCandleAlerts(liveBars, b);
         const signal = liveSignalForBar(b);
-        const slopePct = b.bb_mid ? (Number(b.bb_slope || 0) / Number(b.bb_mid)) * 100 : 0;
+        const bbMove = bbMidMoveMeta(b, liveBars);
         guide.setAttribute('x1', xx);
         guide.setAttribute('x2', xx);
         guide.setAttribute('opacity', '0.55');
@@ -3290,7 +3535,8 @@
             <strong>Momentum</strong>
           </div>
           <div class="tooltip-grid">
-            ${cell('MACD Hist', num(b.macd_hist, 3))} ${cell('BB Slope %', `${num(slopePct, 4)}%`)}
+            ${cell('MACD Hist', num(b.macd_hist, 3))} ${cell('BB Mid Move', fmtPct(bbMove.move))}
+            ${cell('Session Avg BB Mid', fmtPct(bbMove.avg))} ${cell('Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x${bbMove.big ? ' big' : ''}` : 'n/a')}
             ${cell('ATR14', num(b.atr14, 2))} ${cell('Volume', b.volume || 0)}
             ${cell('Stoch K', num(b.stoch_rsi_k, 1))} ${cell('Stoch D', num(b.stoch_rsi_d, 1))}
           </div>
@@ -3577,7 +3823,8 @@
     }
 
     function candleSummary(b) {
-      return `${b.date} ${fmtTime(b.time_key)} O $${b.open.toFixed(2)} H $${b.high.toFixed(2)} L $${b.low.toFixed(2)} C $${b.close.toFixed(2)} | BB Mid $${b.bb_mid?.toFixed(2) ?? '-'} | VWAP $${b.vwap?.toFixed(2) ?? '-'} | MACD DIF ${b.macd_dif?.toFixed(3) ?? '-'} DEA ${b.macd_dea?.toFixed(3) ?? '-'}`;
+      const dayBars = allBarsForCurrentDay();
+      return `${b.date} ${fmtTime(b.time_key)} O $${b.open.toFixed(2)} H $${b.high.toFixed(2)} L $${b.low.toFixed(2)} C $${b.close.toFixed(2)} | BB Mid $${b.bb_mid?.toFixed(2) ?? '-'} | BB Mid Move ${bbMidMoveText(b, dayBars)} | VWAP $${b.vwap?.toFixed(2) ?? '-'} | MACD DIF ${b.macd_dif?.toFixed(3) ?? '-'} DEA ${b.macd_dea?.toFixed(3) ?? '-'}`;
     }
 
     function pairSummary(a, b) {
@@ -4169,6 +4416,36 @@
       };
     }
 
+    function bbMidMovePct(bar) {
+      const slope = Number(bar?.bb_mid_slope ?? bar?.bb_slope);
+      const prevMid = Number(bar?.bb_mid) - slope;
+      if (!Number.isFinite(slope) || !Number.isFinite(prevMid) || prevMid === 0) return null;
+      return slope / prevMid * 100;
+    }
+
+    function avgBbMidMovePct(bars) {
+      const values = (bars || []).map(bbMidMovePct).filter(v => Number.isFinite(v)).map(Math.abs);
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    }
+
+    function bbMidMoveMeta(bar, bars) {
+      const move = bbMidMovePct(bar);
+      const avg = avgBbMidMovePct(bars);
+      const ratio = Number.isFinite(move) && Number.isFinite(avg) && avg > 0 ? Math.abs(move) / avg : null;
+      const big = Number.isFinite(ratio) && ratio >= 1.5;
+      return { move, avg, ratio, big };
+    }
+
+    function fmtPct(value, digits = 4) {
+      return Number.isFinite(value) ? `${value.toFixed(digits)}%` : 'n/a';
+    }
+
+    function bbMidMoveText(bar, bars) {
+      const meta = bbMidMoveMeta(bar, bars);
+      const ratio = Number.isFinite(meta.ratio) ? `${meta.ratio.toFixed(1)}x avg` : 'n/a';
+      return `${fmtPct(meta.move)} | avg ${fmtPct(meta.avg)} | ${ratio}${meta.big ? ' | big' : ''}`;
+    }
+
     function strategyIndicatorSet(strategy = currentStrategy()) {
       const rules = strategy?.rules || {};
       const haystack = [
@@ -4191,8 +4468,9 @@
     function indicatorStatusHtml(bar, strategy = currentStrategy()) {
       if (!bar) return '<span class="muted">No candle selected for indicator status.</span>';
       const used = strategyIndicatorSet(strategy);
+      const dayBars = allBarsForCurrentDay();
       const rows = [
-        ['BB', `mid ${fmtLevel(bar.bb_mid)} · slope ${fmtLevel(bar.bb_slope)}`, used.bb],
+        ['BB', `mid ${fmtLevel(bar.bb_mid)} · move ${bbMidMoveText(bar, dayBars)}`, used.bb],
         ['VWAP', fmtLevel(bar.vwap), used.vwap],
         ['MACD', `hist ${fmtLevel(bar.macd_hist)}`, used.macd],
         ['StochRSI', `${fmtLevel(bar.stoch_rsi_k)} / ${fmtLevel(bar.stoch_rsi_d)}`, used.stoch],
@@ -4215,6 +4493,7 @@
       const monthPf = Number.isFinite(month.profitFactor) ? month.profitFactor.toFixed(2) : 'inf';
       const dayPf = Number.isFinite(day.profitFactor) ? day.profitFactor.toFixed(2) : 'inf';
       const statusBar = allBarsForCurrentDay().slice(-1)[0] || DATA.bars.slice(-1)[0];
+      const bbMove = bbMidMoveMeta(statusBar, allBarsForCurrentDay());
       const metricCards = [
         ['Month P/L', `${fmtMoney(month.pnl)}/share`, month.pnl >= 0 ? 'profit' : 'loss'],
         [`Month ${sh} Shares`, fmtMoney(month.pnl * sh), month.pnl >= 0 ? 'profit' : 'loss'],
@@ -4228,6 +4507,9 @@
         ['Day Trades', day.trades, ''],
         ['Day PF', dayPf, ''],
         ['Day Max DD', `${fmtMoney(day.maxDd)}/share`, 'loss'],
+        ['BB Mid Move', fmtPct(bbMove.move), bbMove.big ? 'profit' : ''],
+        ['Avg BB Mid Move', fmtPct(bbMove.avg), ''],
+        ['Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x` : 'n/a', bbMove.big ? 'profit' : ''],
       ].map(([k, v, cls]) => `<div class="stat"><span>${k}</span><strong class="${cls}">${v}</strong></div>`).join('');
       document.getElementById('stats').innerHTML = metricCards + `
         <div class="stat indicator-status">
@@ -4795,6 +5077,7 @@
         const cell = (label, value) => `<strong>${label}</strong><span>${value}</span>`;
         const money = v => v === null || v === undefined ? '-' : `$${v.toFixed(2)}`;
         const num = (v, d = 2) => v === null || v === undefined ? '-' : v.toFixed(d);
+        const bbMove = bbMidMoveMeta(b, bars);
         guide.setAttribute('x1', xx);
         guide.setAttribute('x2', xx);
         guide.setAttribute('opacity', '0.55');
@@ -4808,7 +5091,8 @@
             ${cell('Open', money(b.open))} ${cell('High', money(b.high))}
             ${cell('Low', money(b.low))} ${cell('Close', money(b.close))}
             ${cell('BB Mid', money(b.bb_mid))} ${cell('BB Upper', money(b.bb_upper))}
-            ${cell('BB Lower', money(b.bb_lower))} ${cell('BB Slope %', num(b.bb_slope, 3))}
+            ${cell('BB Lower', money(b.bb_lower))} ${cell('BB Mid Move', fmtPct(bbMove.move))}
+            ${cell('Avg BB Mid Move', fmtPct(bbMove.avg))} ${cell('Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x${bbMove.big ? ' big' : ''}` : 'n/a')}
             ${cell('VWAP', money(b.vwap))} ${cell('ATR14', num(b.atr14, 2))}
             ${cell('MACD DIF', num(b.macd_dif, 3))} ${cell('MACD DEA', num(b.macd_dea, 3))}
             ${cell('RSI14', num(b.rsi14, 1))} ${cell('Stoch K', num(b.stoch_rsi_k, 1))}
@@ -5023,10 +5307,11 @@
       const tradesWrap = document.getElementById('tradeRows')?.closest('.table-wrap');
       document.getElementById('workspaceTrades').innerHTML = tradesWrap ? tradesWrap.outerHTML : '';
       const bars = allBarsForCurrentDay();
-      document.getElementById('workspaceCandles').innerHTML = `<table><thead><tr><th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Dir</th><th>Delta</th><th>%</th><th>BB Mid</th><th>VWAP</th><th>MACD</th><th>K</th><th>D</th><th>Vol</th><th>Momentum</th><th>BB Slope</th><th>Alert</th></tr></thead><tbody>${bars.slice().reverse().map(b => {
+      document.getElementById('workspaceCandles').innerHTML = `<table><thead><tr><th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Dir</th><th>Delta</th><th>%</th><th>BB Mid</th><th>BB Mid %</th><th>Avg BB Mid %</th><th>VWAP</th><th>MACD</th><th>K</th><th>D</th><th>Vol</th><th>Momentum</th><th>Alert</th></tr></thead><tbody>${bars.slice().reverse().map(b => {
         const index = bars.indexOf(b), prev = bars[index - 1];
         const delta = prev ? b.close - prev.close : 0;
-        return `<tr data-workspace-candle="${b.time_key}"><td>${fmtTime(b.time_key)}</td><td>${b.open.toFixed(2)}</td><td>${b.high.toFixed(2)}</td><td>${b.low.toFixed(2)}</td><td>${b.close.toFixed(2)}</td><td>${b.close >= b.open ? 'UP' : 'DOWN'}</td><td>${fmtMoney(delta)}</td><td>${prev ? ((delta / prev.close) * 100).toFixed(2) : '0.00'}%</td><td>${fmtLevel(b.bb_mid)}</td><td>${fmtLevel(b.vwap)}</td><td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td><td>${b.volume || 0}</td><td>${esc(b.mom_label || b.trend || '')}</td><td>${esc(b.bb_accel_label || b.bb_slope || '')}</td><td>${esc(b.spike || '')}</td></tr>`;
+        const bbMove = bbMidMoveMeta(b, bars);
+        return `<tr data-workspace-candle="${b.time_key}"><td>${fmtTime(b.time_key)}</td><td>${b.open.toFixed(2)}</td><td>${b.high.toFixed(2)}</td><td>${b.low.toFixed(2)}</td><td>${b.close.toFixed(2)}</td><td>${b.close >= b.open ? 'UP' : 'DOWN'}</td><td>${fmtMoney(delta)}</td><td>${prev ? ((delta / prev.close) * 100).toFixed(2) : '0.00'}%</td><td>${fmtLevel(b.bb_mid)}</td><td class="${bbMove.big ? 'profit' : ''}">${fmtPct(bbMove.move)}</td><td>${fmtPct(bbMove.avg)}</td><td>${fmtLevel(b.vwap)}</td><td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td><td>${b.volume || 0}</td><td>${esc(b.mom_label || b.trend || '')}</td><td>${esc(b.spike || '')}</td></tr>`;
       }).join('')}</tbody></table>`;
       document.querySelectorAll('[data-workspace-candle]').forEach(row => row.addEventListener('click', () => {
         const bar = DATA.bars.find(b => b.time_key === row.dataset.workspaceCandle);

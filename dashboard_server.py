@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +18,8 @@ SYMBOLS = ["AAPL", "TSLA", "MU", "INTC"]
 STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close", "mean_reversion"]
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "60m"]
 BARS_CACHE: dict[tuple[str, str, str, str], tuple[list[dict], Path]] = {}
+LIVE_STATE = {"active": False, "symbol": "US.INTC", "extended_time": True, "strategy": "bb_mid_cross_1m", "ktype": "1m"}
+LIVE_LOCK = threading.Lock()
 BB_MID_FLAT_TOLERANCE = 0.001
 BB_MID_FIRST_ENTRY_TIME = "09:45"
 BB_MID_LAST_ENTRY_TIME = "15:10"
@@ -31,6 +35,11 @@ BB_MID_ENTRY_FLAT_TOLERANCE = {
 
 def _plain_symbol(value: str) -> str:
     return value.strip().upper().replace("US.", "") or "INTC"
+
+
+def _moomoo_symbol(value: str) -> str:
+    symbol = str(value or "INTC").strip().upper()
+    return symbol if "." in symbol else f"US.{symbol.replace('US.', '')}"
 
 
 def _timeframe_hint(ktype: str) -> str:
@@ -669,7 +678,127 @@ def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
             k_window = [_num(out[j].get("stoch_rsi_k")) for j in range(max(0, i - 2), i + 1)]
             k_window = [v for v in k_window if v is not None]
             bar["stoch_rsi_d"] = round(sum(k_window) / len(k_window), 6) if k_window else None
+        bar["bb_slope"] = bar.get("bb_mid_slope")
     return out
+
+
+def _moomoo_quote_context():
+    try:
+        import futu
+    except Exception as exc:
+        raise RuntimeError(f"Moomoo/Futu SDK is unavailable: {exc}") from exc
+    return futu.OpenQuoteContext(host="127.0.0.1", port=11111), futu
+
+
+def _moomoo_kline_bars(df) -> list[dict]:
+    if df is None or getattr(df, "empty", True):
+        return []
+    bars = []
+    records = df.to_dict("records")
+    for row in records:
+        time_key = str(row.get("time_key") or row.get("time") or row.get("datetime") or "")
+        if not time_key:
+            continue
+        bars.append(
+            {
+                "time_key": time_key,
+                "date": time_key[:10],
+                "open": _num(row.get("open"), 0) or 0,
+                "high": _num(row.get("high"), 0) or 0,
+                "low": _num(row.get("low"), 0) or 0,
+                "close": _num(row.get("close"), 0) or 0,
+                "volume": _num(row.get("volume"), 0) or 0,
+            }
+        )
+    bars.sort(key=lambda item: item.get("time_key", ""))
+    return _compute_derived_indicators(bars[-240:])
+
+
+def _live_market_state(bar: dict) -> str:
+    close = _num(bar.get("close"))
+    mid = _num(bar.get("bb_mid"))
+    slope = _num(bar.get("bb_mid_slope"), 0) or 0
+    if close is None or mid is None:
+        return "RANGE_BOUND"
+    if close > mid and slope > 0:
+        return "BULLISH"
+    if close < mid and slope < 0:
+        return "BEARISH"
+    return "RANGE_BOUND"
+
+
+def _strategy_timeframe(strategy_id: str, fallback: str = "1m") -> str:
+    tail = str(strategy_id or "").rsplit("_", 1)[-1]
+    return tail if tail in TIMEFRAMES else fallback
+
+
+def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cross_1m", ktype: str = "1m") -> dict:
+    if not bars:
+        return {}
+    strategy_id = str(strategy_id or "bb_mid_cross_1m")
+    if strategy_id.rsplit("_", 1)[0] not in STRATEGY_NAMES:
+        strategy_id = f"bb_mid_cross_{str(ktype or '1m')}"
+    timeframe = _strategy_timeframe(strategy_id, str(ktype or "1m"))
+    signal_bars = bars if timeframe == "1m" else _compute_derived_indicators(_timeframe_bars(bars, timeframe))
+    bar = signal_bars[-1]
+    prev = signal_bars[-2] if len(signal_bars) > 1 else None
+    side, confidence, reason = _fast_signal(strategy_id, bar, prev, signal_bars, len(signal_bars) - 1)
+    if strategy_id.startswith(("bb_mid_2_no_choppy_", "bb_mid_no_choppy_exit_")) and _bb_mid_entry_flat(bar, prev, timeframe):
+        side, confidence, reason = None, 0.0, "Selected strategy is waiting because BB mid is flat."
+    action = side or "WAIT"
+    close = _num(bar.get("close"), 0) or 0
+    atr = _num(bar.get("atr14"), 0) or 0
+    stop = close - atr if action == "LONG" else close + atr if action == "SHORT" else None
+    target = close + (atr * 2) if action == "LONG" else close - (atr * 2) if action == "SHORT" else None
+    state_1m = _live_market_state(bars[-1])
+    bars_5m = _timeframe_bars(bars, "5m")
+    state_5m = _live_market_state(bars_5m[-1]) if bars_5m else "RANGE_BOUND"
+    bullish_score = 0
+    bearish_score = 0
+    if close and bar.get("bb_mid"):
+        bullish_score += 1 if close > bar["bb_mid"] else 0
+        bearish_score += 1 if close < bar["bb_mid"] else 0
+    if (_num(bar.get("bb_mid_slope"), 0) or 0) > 0:
+        bullish_score += 1
+    elif (_num(bar.get("bb_mid_slope"), 0) or 0) < 0:
+        bearish_score += 1
+    if (_num(bar.get("macd_hist"), 0) or 0) > 0:
+        bullish_score += 1
+    elif (_num(bar.get("macd_hist"), 0) or 0) < 0:
+        bearish_score += 1
+    return {
+        "signal": action,
+        "directional_signal": action if action in {"LONG", "SHORT"} else "WAIT",
+        "strategy": strategy_id,
+        "strategy_timeframe": timeframe,
+        "signal_time": bar.get("time_key"),
+        "signal_price": close,
+        "confidence": round(confidence * 100, 1) if confidence else 0,
+        "bullish_score": bullish_score,
+        "bearish_score": bearish_score,
+        "market_state": state_1m,
+        "market_regime_1m": state_1m,
+        "market_regime_5m": state_5m,
+        "setup": "BB_MID_CROSS" if action in {"LONG", "SHORT"} else "NONE",
+        "trade_grade": "A" if confidence >= 0.7 else "B" if confidence >= 0.5 else "C" if action != "WAIT" else "F",
+        "trade_state": "LIVE",
+        "entry_price": close if action in {"LONG", "SHORT"} else None,
+        "stop_loss": stop,
+        "target_price": target,
+        "risk_reward": 2 if action in {"LONG", "SHORT"} and atr else None,
+        "entry_reason": reason,
+        "exit_reason": "",
+        "reasoning": [reason] if reason else ["Waiting for BB midline signal confirmation."],
+        "expected_next_1_candle": "up" if state_1m == "BULLISH" else "down" if state_1m == "BEARISH" else "sideways",
+        "expected_next_3_candles": "trend continuation" if state_1m in {"BULLISH", "BEARISH"} else "chop",
+        "expected_next_5_candles": state_5m.lower(),
+        "bullish_continuation": 65 if state_1m == "BULLISH" else 25,
+        "bearish_continuation": 65 if state_1m == "BEARISH" else 25,
+        "bullish_reversal": 20 if state_1m == "BEARISH" else 10,
+        "bearish_reversal": 20 if state_1m == "BULLISH" else 10,
+        "sideways_probability": 60 if state_1m == "RANGE_BOUND" else 25,
+        "risk_checks": {"risk_filter_passed": bool(action in {"LONG", "SHORT"}), "position_size_pct": None},
+    }
 
 
 def _is_final_bar(bars: list[dict], index: int) -> bool:
@@ -921,6 +1050,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_sse_event(self, data: dict):
+        payload = f"data: {json.dumps(data)}\n\n".encode("utf-8")
+        self.wfile.write(payload)
+        self.wfile.flush()
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/trade-data-list":
@@ -931,6 +1065,67 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 for file_path in sorted(symbol_dir.glob("*.json")):
                     items.append({"symbol": f"US.{symbol_dir.name}", "file": str(file_path.name)})
             self._send_json(items)
+            return
+        if path == "/api/realtime/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            quote_ctx = None
+            last_time_key = None
+            try:
+                quote_ctx, futu = _moomoo_quote_context()
+                with LIVE_LOCK:
+                    state = dict(LIVE_STATE)
+                symbol = _moomoo_symbol(state.get("symbol") or "US.INTC")
+                extended_time = bool(state.get("extended_time", True))
+                ret, msg = quote_ctx.subscribe([symbol], [futu.SubType.K_1M], is_first_push=False, subscribe_push=False, extended_time=extended_time)
+                if ret != futu.RET_OK:
+                    self._send_sse_event({"error": f"Moomoo subscribe failed: {msg}", "symbol": symbol})
+                    return
+                while True:
+                    with LIVE_LOCK:
+                        state = dict(LIVE_STATE)
+                    if not state.get("active") or _moomoo_symbol(state.get("symbol")) != symbol:
+                        break
+                    ret, data = quote_ctx.get_cur_kline(symbol, 240, ktype=futu.KLType.K_1M)
+                    if ret != futu.RET_OK:
+                        self._send_sse_event({"error": f"Moomoo kline failed: {data}", "symbol": symbol})
+                        time.sleep(2)
+                        continue
+                    bars = _moomoo_kline_bars(data)
+                    if bars:
+                        bar = bars[-1]
+                        if bar.get("time_key") != last_time_key:
+                            last_time_key = bar.get("time_key")
+                        self._send_sse_event(
+                            {
+                                "symbol": symbol,
+                                "bars": bars,
+                                "bar": bar,
+                                "analysis": _live_analysis(
+                                    symbol,
+                                    bars,
+                                    str(state.get("strategy") or "bb_mid_cross_1m"),
+                                    str(state.get("ktype") or "1m"),
+                                ),
+                            }
+                        )
+                    time.sleep(2)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except Exception as exc:
+                try:
+                    self._send_sse_event({"error": str(exc)})
+                except Exception:
+                    return
+            finally:
+                if quote_ctx is not None:
+                    try:
+                        quote_ctx.close()
+                    except Exception:
+                        pass
             return
         super().do_GET()
 
@@ -977,8 +1172,35 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, 500)
             return
 
-        if path in {"/api/realtime/start", "/api/realtime/stop"}:
-            self._send_json({"ok": False, "message": "Realtime stream is not enabled in dashboard_server.py."})
+        if path == "/api/realtime/start":
+            symbol = _moomoo_symbol(str(payload.get("symbol") or "INTC"))
+            extended_time = bool(payload.get("extended_time", True))
+            strategy = str(payload.get("strategy") or "bb_mid_cross_1m")
+            ktype = str(payload.get("ktype") or _strategy_timeframe(strategy, "1m"))
+            quote_ctx = None
+            try:
+                quote_ctx, futu = _moomoo_quote_context()
+                ret, msg = quote_ctx.subscribe([symbol], [futu.SubType.K_1M], is_first_push=False, subscribe_push=False, extended_time=extended_time)
+                if ret != futu.RET_OK:
+                    self._send_json({"ok": False, "message": f"Moomoo subscribe failed: {msg}"}, 502)
+                    return
+                with LIVE_LOCK:
+                    LIVE_STATE.update({"active": True, "symbol": symbol, "extended_time": extended_time, "strategy": strategy, "ktype": ktype})
+                self._send_json({"ok": True, "symbol": symbol, "strategy": strategy, "ktype": ktype, "message": "Live Moomoo stream started."})
+            except Exception as exc:
+                self._send_json({"ok": False, "message": str(exc)}, 500)
+            finally:
+                if quote_ctx is not None:
+                    try:
+                        quote_ctx.close()
+                    except Exception:
+                        pass
+            return
+
+        if path == "/api/realtime/stop":
+            with LIVE_LOCK:
+                LIVE_STATE.update({"active": False})
+            self._send_json({"ok": True, "message": "Live stream stopped."})
             return
 
         self._send_json({"error": f"Unknown endpoint: {path}"}, 404)
