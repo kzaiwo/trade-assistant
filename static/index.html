@@ -934,8 +934,8 @@
       font-size: 11px;
       dominant-baseline: middle;
     }
-    .trade-bg-win { fill: rgba(var(--color-bullish-rgb), 0.10); }
-    .trade-bg-loss { fill: rgba(var(--color-bearish-rgb), 0.11); }
+    .trade-bg-win { fill: rgba(var(--color-bullish-rgb), 0.15); }
+    .trade-bg-loss { fill: rgba(var(--color-bearish-rgb), 0.16); }
     .rally-watch-bg-up { fill: rgba(var(--color-bullish-rgb), 0.075); stroke: rgba(var(--color-bullish-rgb), 0.18); stroke-width: 1; }
     .rally-watch-bg-down { fill: rgba(var(--color-bearish-rgb), 0.08); stroke: rgba(var(--color-bearish-rgb), 0.2); stroke-width: 1; }
     .rally-watch-marker-up { fill: rgba(var(--color-bullish-rgb), 0.75); }
@@ -4277,18 +4277,60 @@
       if (bar.period_start) return range[0] <= range[1] ? periodStart >= range[0] && time <= range[1] : periodStart >= range[0] || time <= range[1];
       return range[0] <= range[1] ? time >= range[0] && time <= range[1] : time >= range[0] || time <= range[1];
     }
+    function tradeMatchesCurrentDay(trade) {
+      if (!currentDay) return true;
+      const day = String(trade.day || trade.entryTime || trade.entry_time || '').slice(0, 10);
+      if (day === currentDay) return true;
+      if (day.length >= 5 && day.slice(-5) === currentDay.slice(-5)) return true;
+      const entryDay = String(trade.entryTime || trade.entry_time || '').slice(0, 10);
+      return entryDay === currentDay || (entryDay.length >= 5 && entryDay.slice(-5) === currentDay.slice(-5));
+    }
     function filteredTrades() {
-      const dayTrades = currentTrades().filter(t => t.day === currentDay);
-      const visible = new Set(filteredBars().map(b => b.time_key));
-      return dayTrades.filter(t => visible.has(t.entryTime) || visible.has(t.exitTime));
+      const dayTrades = currentTrades().filter(tradeMatchesCurrentDay);
+      const bars = filteredBars();
+      if (!bars.length) return dayTrades;
+      const first = timeMs(bars[0].time_key);
+      const last = timeMs(bars[bars.length - 1].time_key);
+      return dayTrades.filter(t => {
+        const entry = timeMs(t.entryTime);
+        const exit = timeMs(t.exitTime);
+        if (!Number.isFinite(entry) || !Number.isFinite(exit)) return true;
+        return entry <= last && exit >= first;
+      });
     }
     function dayTrades() {
-      return currentTrades().filter(t => t.day === currentDay);
+      return currentTrades().filter(tradeMatchesCurrentDay);
     }
 
     function pathFor(points, x, y) {
       return points.filter(p => p[1] !== null && Number.isFinite(p[1]))
         .map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(2)},${y(p[1]).toFixed(2)}`).join(' ');
+    }
+    function timeMs(timeKey) {
+      const ms = Date.parse(String(timeKey || '').replace(' ', 'T'));
+      return Number.isFinite(ms) ? ms : NaN;
+    }
+    function nearestBarIndexForTime(bars, timeKey, options = {}) {
+      if (!bars.length || !timeKey) return undefined;
+      const exact = bars.findIndex(bar => bar.time_key === timeKey);
+      if (exact >= 0) return exact;
+      const target = timeMs(timeKey);
+      if (!Number.isFinite(target)) return undefined;
+      const first = timeMs(bars[0].time_key);
+      const last = timeMs(bars[bars.length - 1].time_key);
+      if (!options.clamp && (target < first || target > last)) return undefined;
+      let bestIndex;
+      let bestDistance = Infinity;
+      bars.forEach((bar, index) => {
+        const value = timeMs(bar.time_key);
+        if (!Number.isFinite(value)) return;
+        const distance = Math.abs(value - target);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      });
+      return bestIndex;
     }
 
     function zoomBy(factor) {
@@ -4483,6 +4525,7 @@
     function render() {
       const bars = filteredBars();
       const trades = filteredTrades();
+      const strategyDayTrades = dayTrades();
       updateHeaderStatus();
       const zoomLabel = document.getElementById('zoomCount');
       if (zoomLabel) zoomLabel.textContent = `${bars.length} candles`;
@@ -4511,7 +4554,7 @@
       renderDailyRows();
       renderSavedNotes();
       chartTitle.textContent = `${currentStrategy().label} | ${currentDay}`;
-      renderTable(dayTrades());
+      renderTable(strategyDayTrades);
       renderWorkspace();
       svg.innerHTML = '';
 
@@ -4534,7 +4577,7 @@
       rect(chartScale.left, priceTop, chartScale.drawW, priceBottom - priceTop, 'panel-bg');
       drawGrid(x, y, bars, pMin - pad, pMax + pad, priceTop, priceBottom, 'Price', W, margin);
 
-      if (showTrades.checked) drawTradeBackgrounds(bars, trades, x, priceTop, priceBottom);
+      drawTradeBackgrounds(bars, strategyDayTrades, x, priceTop, priceBottom);
       if (showBands.checked) {
         const upper = bars.map((b, i) => [i, b.bb_upper]);
         const lower = bars.map((b, i) => [i, b.bb_lower]).reverse();
@@ -4555,7 +4598,11 @@
       drawHistoricalLastPrice(bars, y, W, margin);
 
       drawMeasurement(bars, x, y, priceTop, priceBottom);
-      if (showTrades.checked) drawTrades(bars, trades, x, y, priceTop, priceBottom);
+      if (showTrades.checked) {
+        drawTrades(bars, trades, x, y, priceTop, priceBottom);
+      }
+      drawBacktestPnlOverlays(bars, strategyDayTrades, x, priceTop);
+      drawBacktestSignalMarkers(bars, strategyDayTrades, x, y, priceTop, priceBottom);
       if (showMacd.checked) drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, chartScale.slotCount, chartScale.drawW);
       if (showStoch.checked) drawStochRsi(bars, x, stochTop, stochBottom, W, margin, chartScale.slotCount, chartScale.drawW);
       drawHoverLayer(bars, trades, x, y, priceTop, hoverBottom, W, margin);
@@ -4580,14 +4627,18 @@
     }
 
     function drawTradeBackgrounds(bars, trades, x, top, bottom) {
-      const localIndex = new Map(bars.map((b, i) => [b.time_key, i]));
       trades.forEach(t => {
-        const ei = localIndex.get(t.entryTime);
-        const xi = localIndex.get(t.exitTime);
+        const ei = nearestBarIndexForTime(bars, t.entryTime, { clamp: true });
+        const xi = nearestBarIndexForTime(bars, t.exitTime, { clamp: true });
         if (ei === undefined || xi === undefined) return;
+        const entryTime = timeMs(t.entryTime);
+        const exitTime = timeMs(t.exitTime);
+        const first = timeMs(bars[0].time_key);
+        const last = timeMs(bars[bars.length - 1].time_key);
+        if (Number.isFinite(entryTime) && Number.isFinite(exitTime) && (exitTime < first || entryTime > last)) return;
         const x1 = Math.min(x(ei), x(xi));
         const width = Math.max(3, Math.abs(x(xi) - x(ei)));
-        rect(x1, top, width, bottom - top, t.pnl >= 0 ? 'trade-bg-win' : 'trade-bg-loss');
+        rect(x1, top, width, bottom - top, t.side === 'LONG' ? 'trade-bg-win' : 'trade-bg-loss');
       });
     }
 
@@ -4784,7 +4835,6 @@
     }
 
     function drawTrades(bars, trades, x, y, top, bottom) {
-      const localIndex = new Map(bars.map((b, i) => [b.time_key, i]));
       const markerCounts = new Map();
       const markerShift = key => {
         const count = markerCounts.get(key) || 0;
@@ -4792,21 +4842,118 @@
         return count === 0 ? 0 : (count % 2 ? 12 : -12) * Math.ceil(count / 2);
       };
       trades.forEach(t => {
-        const ei = localIndex.get(t.entryTime);
-        const xi = localIndex.get(t.exitTime);
-        if (ei === undefined || xi === undefined) return;
+        const ei = nearestBarIndexForTime(bars, t.entryTime);
+        const xi = nearestBarIndexForTime(bars, t.exitTime);
+        if (ei === undefined && xi === undefined) return;
         const color = t.side === 'LONG' ? 'var(--green)' : 'var(--red)';
         const cls = selectedTradeId === t.id ? 'selected' : '';
-        drawTradeSeparator(x(ei), top, bottom, `${t.side} entry ${fmtTime(t.entryTime)}`);
-        drawTradeSeparator(x(xi), top, bottom, `${t.side} exit ${fmtTime(t.exitTime)}`);
-        const exitX = x(xi) + markerShift(`${t.exitTime}:${Math.round(y(t.exit))}`);
-        drawTradeSummaryLabel((x(ei) + x(xi)) / 2, top + 52, t, color);
-        if (t.side === 'LONG') {
-          tradeAnnotation(exitX, y(t.exit), '', color, t, cls, 24, 'Close', t.exitTime, t.exit);
-        } else {
-          tradeAnnotation(exitX, y(t.exit), '', color, t, cls, -24, 'Close', t.exitTime, t.exit);
+        if (ei !== undefined) drawTradeSeparator(x(ei), top, bottom, `${t.side} entry ${fmtTime(t.entryTime)}`);
+        if (xi !== undefined) drawTradeSeparator(x(xi), top, bottom, `${t.side} exit ${fmtTime(t.exitTime)}`);
+        if (xi !== undefined) {
+          const exitX = x(xi) + markerShift(`${t.exitTime}:${Math.round(y(t.exit))}`);
+          if (t.side === 'LONG') {
+            tradeAnnotation(exitX, y(t.exit), '', color, t, cls, 24, 'Close', t.exitTime, t.exit);
+          } else {
+            tradeAnnotation(exitX, y(t.exit), '', color, t, cls, -24, 'Close', t.exitTime, t.exit);
+          }
         }
       });
+    }
+
+    function drawBacktestPnlOverlays(bars, trades, x, top) {
+      trades.forEach(trade => {
+        const entryTime = timeMs(trade.entryTime);
+        const exitTime = timeMs(trade.exitTime);
+        const first = timeMs(bars[0]?.time_key);
+        const last = timeMs(bars[bars.length - 1]?.time_key);
+        if (Number.isFinite(entryTime) && Number.isFinite(exitTime) && (exitTime < first || entryTime > last)) return;
+        const ei = nearestBarIndexForTime(bars, trade.entryTime, { clamp: true });
+        const xi = nearestBarIndexForTime(bars, trade.exitTime, { clamp: true });
+        if (ei === undefined || xi === undefined) return;
+        const color = trade.side === 'LONG' ? '#147a48' : '#b73734';
+        drawTradePnlOverlay((x(ei) + x(xi)) / 2, top + 30, trade, color);
+      });
+    }
+
+    function backtestTradeSignals(trades) {
+      return trades.flatMap(trade => {
+        const entryAction = trade.side === 'LONG' ? 'BUY' : 'SELL';
+        const exitAction = trade.side === 'LONG' ? 'SELL' : 'BUY';
+        return [
+          {
+            action: entryAction,
+            side: trade.side,
+            time: trade.entryTime,
+            price: trade.entry,
+            reason: trade.entryReason,
+            trade,
+            phase: 'Entry'
+          },
+          {
+            action: exitAction,
+            side: trade.side,
+            time: trade.exitTime,
+            price: trade.exit,
+            reason: exitReasonText(trade.reason),
+            trade,
+            phase: 'Exit'
+          }
+        ];
+      }).filter(signal => signal.time);
+    }
+
+    function drawBacktestSignalMarkers(bars, trades, x, y, top, bottom) {
+      if (!trades.length) return;
+      const markerCounts = new Map();
+      const markerShift = key => {
+        const count = markerCounts.get(key) || 0;
+        markerCounts.set(key, count + 1);
+        return count === 0 ? 0 : (count % 2 ? 14 : -14) * Math.ceil(count / 2);
+      };
+      backtestTradeSignals(trades)
+        .sort((a, b) => timeMs(a.time) - timeMs(b.time))
+        .forEach(signal => {
+          const index = nearestBarIndexForTime(bars, signal.time);
+          if (index === undefined) return;
+          const bar = bars[index];
+          const bullish = signal.action === 'BUY';
+          const color = bullish ? '#147a48' : '#b73734';
+          const price = Number.isFinite(Number(signal.price)) ? Number(signal.price) : Number(bar.close);
+          const xx = x(index) + markerShift(`${signal.time}:${signal.action}`);
+          const yy = y(price);
+          const labelY = yy + (bullish ? 14 : -34);
+          const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          g.setAttribute('class', `trade-annotation ${bullish ? 'profit' : 'loss'}`);
+          g.innerHTML = `
+            <line x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}" stroke="${color}" stroke-dasharray="3 5" opacity="0.32"/>
+            <circle cx="${xx}" cy="${yy}" r="5" fill="${color}" stroke="white" stroke-width="1.5"/>
+            <rect x="${xx - 25}" y="${labelY}" width="50" height="18" rx="5" fill="${color}" opacity="0.86"/>
+            <text x="${xx}" y="${labelY + 12}" text-anchor="middle" font-size="10" font-weight="800" fill="white">${signal.action}</text>
+          `;
+          g.addEventListener('mouseenter', event => showBacktestSignalTip(event, signal, bar));
+          g.addEventListener('mousemove', event => showBacktestSignalTip(event, signal, bar));
+          g.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+          g.addEventListener('click', () => {
+            selectedTradeId = signal.trade.id;
+            renderTable(dayTrades());
+            render();
+          });
+          svg.appendChild(g);
+        });
+    }
+
+    function showBacktestSignalTip(event, signal, bar) {
+      const trade = signal.trade || {};
+      const pnl = Number(trade.pnl || 0);
+      tooltip.innerHTML = `
+        <strong>${esc(signal.action)} ${esc(signal.side || '')}</strong><br>
+        ${esc(signal.phase || 'Signal')} ${esc(signal.time || bar.time_key)} @ $${fmtLevel(signal.price || bar.close)}<br>
+        Trade P/L: <span class="${pnl >= 0 ? 'profit' : 'loss'}">${fmtMoney(pnl)}/sh (${fmtMoney(pnl * shares())})</span><br><br>
+        ${esc(signal.reason || '')}
+      `;
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${Math.min(window.innerWidth - 460, Math.max(12, event.clientX + 14))}px`;
+      tooltip.style.top = `${Math.min(window.innerHeight - 260, Math.max(12, event.clientY + 14))}px`;
     }
 
     function drawTradeSeparator(xPos, top, bottom, label) {
@@ -4852,6 +4999,37 @@
       textEl.textContent = safeLabel;
       g.appendChild(textEl);
       bindTradeEvents(g, trade, { action, signalTime: action === 'Exit' ? trade.exitTime : trade.entryTime, signalPrice: action === 'Exit' ? trade.exit : trade.entry });
+      svg.appendChild(g);
+    }
+
+    function drawTradePnlOverlay(cx, cy, trade, color) {
+      const totalPnl = fmtMoney(Number(trade.pnl || 0) * shares());
+      const perSharePnl = `${fmtMoney(Number(trade.pnl || 0))}/sh`;
+      const label = `${totalPnl} (${perSharePnl})`;
+      const width = Math.max(108, label.length * 6.2 + 24);
+      const height = 26;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', `trade-pnl-overlay ${trade.pnl >= 0 ? 'profit' : 'loss'}`);
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', cx - width / 2);
+      bg.setAttribute('y', cy - height / 2);
+      bg.setAttribute('width', width);
+      bg.setAttribute('height', height);
+      bg.setAttribute('rx', 6);
+      bg.setAttribute('fill', Number(trade.pnl || 0) >= 0 ? 'rgba(20,122,72,0.82)' : 'rgba(183,55,52,0.82)');
+      bg.setAttribute('stroke', color);
+      bg.setAttribute('stroke-width', '1');
+      g.appendChild(bg);
+      const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textEl.setAttribute('x', cx);
+      textEl.setAttribute('y', cy + 4);
+      textEl.setAttribute('text-anchor', 'middle');
+      textEl.setAttribute('font-size', '11');
+      textEl.setAttribute('font-weight', '800');
+      textEl.setAttribute('fill', '#fff');
+      textEl.textContent = label;
+      g.appendChild(textEl);
+      bindTradeEvents(g, trade, { action: 'P/L', signalTime: trade.exitTime, signalPrice: trade.exit });
       svg.appendChild(g);
     }
 
