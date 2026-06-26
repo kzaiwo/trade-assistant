@@ -10,11 +10,19 @@
       --muted: #5f6875;
       --line: #d8dde5;
       --panel: #f7f9fb;
-      --green: #147a48;
-      --red: #b73734;
+      --color-bullish: #147a48;
+      --color-bearish: #b73734;
+      --color-neutral: #5f6875;
+      --color-warning: #a66a00;
+      --color-bullish-rgb: 20, 122, 72;
+      --color-bearish-rgb: 183, 55, 52;
+      --color-neutral-rgb: 95, 104, 117;
+      --color-warning-rgb: 166, 106, 0;
+      --green: var(--color-bullish);
+      --red: var(--color-bearish);
       --blue: #1f7ab8;
       --purple: #5a189a;
-      --amber: #a66a00;
+      --amber: var(--color-warning);
     }
     * { box-sizing: border-box; }
     body {
@@ -287,8 +295,8 @@
     }
     .calendar-day.empty { cursor: default; background: transparent; border-color: transparent; }
     .calendar-day.active { outline: 2px solid var(--blue); outline-offset: 1px; }
-    .calendar-day.profit-day { background: rgba(20, 122, 72, 0.10); border-color: rgba(20, 122, 72, 0.35); }
-    .calendar-day.loss-day { background: rgba(183, 55, 52, 0.10); border-color: rgba(183, 55, 52, 0.35); }
+    .calendar-day.profit-day { background: rgba(var(--color-bullish-rgb), 0.10); border-color: rgba(var(--color-bullish-rgb), 0.35); }
+    .calendar-day.loss-day { background: rgba(var(--color-bearish-rgb), 0.10); border-color: rgba(var(--color-bearish-rgb), 0.35); }
     .calendar-date { font-size: 11px; font-weight: 700; color: var(--ink); }
     .calendar-pnl { font-size: 12px; font-weight: 800; line-height: 1.05; }
     .calendar-meta { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -313,8 +321,8 @@
       border-radius: 50%;
       background: var(--muted);
     }
-    .stream-dot.on { background: var(--green); }
-    .stream-dot.err { background: var(--red); }
+    .stream-dot.on { background: var(--color-bullish); }
+    .stream-dot.err { background: var(--color-bearish); }
     .live-chart {
       width: 100%;
       height: 920px;
@@ -350,8 +358,45 @@
     }
     .live-grid {
       display: grid;
-      grid-template-columns: 1.1fr 1.4fr 1fr;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .live-section {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+    .live-section h2 {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .live-section h2::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--color-neutral);
+      opacity: .58;
+    }
+    .live-section.action h2::before { background: var(--blue); opacity: .78; }
+    .live-section.levels h2::before { background: var(--purple); opacity: .72; }
+    .live-section.context h2::before { background: var(--color-neutral); opacity: .5; }
+    .live-section.diagnostics h2::before { background: var(--color-warning); opacity: .72; }
+    .live-section-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
+      align-items: stretch;
+    }
+    .live-section.action .live-section-grid {
+      grid-template-columns: .8fr 1fr 1.3fr .9fr;
     }
     .live-card {
       border: 1px solid var(--line);
@@ -360,6 +405,11 @@
       padding: 9px 10px;
       min-height: 78px;
     }
+    .live-card.priority { background: linear-gradient(180deg, #fff, #f6faff); border-color: rgba(31, 122, 184, 0.22); }
+    .live-card.bullish { border-color: rgba(var(--color-bullish-rgb), 0.28); background: rgba(var(--color-bullish-rgb), 0.055); }
+    .live-card.bearish { border-color: rgba(var(--color-bearish-rgb), 0.30); background: rgba(var(--color-bearish-rgb), 0.055); }
+    .live-card.neutral { border-color: rgba(var(--color-neutral-rgb), 0.22); background: rgba(var(--color-neutral-rgb), 0.055); }
+    .live-card.warning { border-color: rgba(var(--color-warning-rgb), 0.34); background: rgba(var(--color-warning-rgb), 0.075); }
     .live-card h3 {
       margin: 0 0 6px;
       color: var(--muted);
@@ -397,10 +447,11 @@
       padding: 3px 6px;
       font-size: 11px;
     }
-    .live-signal.bullish { color: var(--green); background: rgba(20, 122, 72, 0.10); border-color: rgba(20, 122, 72, 0.34); }
-    .live-signal.bearish { color: var(--red); background: rgba(183, 55, 52, 0.10); border-color: rgba(183, 55, 52, 0.34); }
-    .live-signal.neutral { color: var(--muted); background: #f3f5f8; border-color: var(--line); }
-    .live-signal.alert { color: #8a5a00; background: #fff4d6; border-color: #e4b653; }
+    .live-signal.bullish { color: var(--color-bullish); background: rgba(var(--color-bullish-rgb), 0.10); border-color: rgba(var(--color-bullish-rgb), 0.34); }
+    .live-signal.bearish { color: var(--color-bearish); background: rgba(var(--color-bearish-rgb), 0.10); border-color: rgba(var(--color-bearish-rgb), 0.34); }
+    .live-signal.neutral { color: var(--color-neutral); background: rgba(var(--color-neutral-rgb), 0.10); border-color: var(--line); }
+    .live-signal.warning,
+    .live-signal.alert { color: var(--color-warning); background: rgba(var(--color-warning-rgb), 0.12); border-color: rgba(var(--color-warning-rgb), 0.36); }
     .subtle-settings { opacity: .68; font-weight: 600; }
     .subtle-settings:hover { opacity: 1; }
     .settings-modal {
@@ -483,9 +534,10 @@
       font-weight: 800;
       letter-spacing: 0;
     }
-    .strategy-signal.bullish { color: white; background: var(--green); }
-    .strategy-signal.bearish { color: white; background: var(--red); }
-    .strategy-signal.neutral { color: var(--ink); background: #e8ecf1; }
+    .strategy-signal.bullish { color: white; background: var(--color-bullish); }
+    .strategy-signal.bearish { color: white; background: var(--color-bearish); }
+    .strategy-signal.warning { color: var(--color-warning); background: rgba(var(--color-warning-rgb), 0.16); }
+    .strategy-signal.neutral { color: var(--ink); background: rgba(var(--color-neutral-rgb), 0.14); }
     .ask-gpt-launcher {
       position: fixed;
       right: 22px;
@@ -625,12 +677,12 @@
     .ask-gpt-msg p:last-child { margin-bottom: 0; }
     .ask-gpt-msg ul { margin: 6px 0 6px 18px; padding: 0; }
     .ask-gpt-msg li { margin: 3px 0; }
-    .ask-gpt-green { color: var(--green); font-weight: 800; }
-    .ask-gpt-red { color: var(--red); font-weight: 800; }
+    .ask-gpt-green { color: var(--color-bullish); font-weight: 800; }
+    .ask-gpt-red { color: var(--color-bearish); font-weight: 800; }
     .ask-gpt-gray { color: var(--muted); font-weight: 800; }
     .ask-gpt-yellow { color: #946200; font-weight: 800; }
-    .ask-gpt-label-bullish { color: var(--green); font-weight: 900; }
-    .ask-gpt-label-bearish { color: var(--red); font-weight: 900; }
+    .ask-gpt-label-bullish { color: var(--color-bullish); font-weight: 900; }
+    .ask-gpt-label-bearish { color: var(--color-bearish); font-weight: 900; }
     .ask-gpt-label-neutral { color: var(--muted); font-weight: 900; }
     .ask-gpt-modal {
       position: fixed;
@@ -744,8 +796,8 @@
     }
     .stat span { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
     .stat strong { display: block; font-size: 16px; line-height: 1.15; }
-    .profit { color: var(--green); }
-    .loss { color: var(--red); }
+    .profit { color: var(--color-bullish); }
+    .loss { color: var(--color-bearish); }
     .layout {
       display: grid;
       grid-template-columns: 1fr;
@@ -807,14 +859,14 @@
     .grid { stroke: #e9edf2; stroke-width: 1; }
     .panel-bg { fill: #fbfcfe; stroke: #e7ebf1; stroke-width: 1; }
     .close-line { fill: none; stroke: #20242a; stroke-width: 1.6; }
-    .candle-up { fill: rgba(20, 122, 72, 0.78); stroke: #147a48; stroke-width: 1; }
-    .candle-down { fill: rgba(183, 55, 52, 0.78); stroke: #b73734; stroke-width: 1; }
-    .candle-flat { fill: #6b7280; stroke: #4b5563; stroke-width: 1; }
-    .candle-wick-up { stroke: #147a48; stroke-width: 1; }
-    .candle-wick-down { stroke: #b73734; stroke-width: 1; }
-    .bb-mid { fill: none; stroke: #c98216; stroke-width: 1.9; }
-    .bb-mid-turn-up { fill: rgba(20, 122, 72, 0.62); stroke: white; stroke-width: 1.2; }
-    .bb-mid-turn-down { fill: rgba(183, 55, 52, 0.62); stroke: white; stroke-width: 1.2; }
+    .candle-up { fill: rgba(var(--color-bullish-rgb), 0.78); stroke: var(--color-bullish); stroke-width: 1; }
+    .candle-down { fill: rgba(var(--color-bearish-rgb), 0.78); stroke: var(--color-bearish); stroke-width: 1; }
+    .candle-flat { fill: rgba(var(--color-neutral-rgb), 0.88); stroke: var(--color-neutral); stroke-width: 1; }
+    .candle-wick-up { stroke: var(--color-bullish); stroke-width: 1; }
+    .candle-wick-down { stroke: var(--color-bearish); stroke-width: 1; }
+    .bb-mid { fill: none; stroke: var(--color-warning); stroke-width: 1.9; }
+    .bb-mid-turn-up { fill: rgba(var(--color-bullish-rgb), 0.62); stroke: white; stroke-width: 1.2; }
+    .bb-mid-turn-down { fill: rgba(var(--color-bearish-rgb), 0.62); stroke: white; stroke-width: 1.2; }
     .bb-mid-arrow-up, .bb-mid-arrow-down {
       font-size: 13px;
       font-weight: 900;
@@ -824,19 +876,19 @@
       stroke-width: 2.4px;
       paint-order: stroke fill;
     }
-    .bb-mid-arrow-up { fill: rgba(20, 122, 72, 0.72); }
-    .bb-mid-arrow-down { fill: rgba(183, 55, 52, 0.72); }
+    .bb-mid-arrow-up { fill: rgba(var(--color-bullish-rgb), 0.72); }
+    .bb-mid-arrow-down { fill: rgba(var(--color-bearish-rgb), 0.72); }
     .bb-mid-turn-flat { fill: rgba(120, 130, 145, 0.56); stroke: white; stroke-width: 1; opacity: 0.68; }
     .bb-upper { fill: none; stroke: #8b5cf6; stroke-width: 1.55; }
     .bb-lower { fill: none; stroke: #7fc8ff; stroke-width: 1.55; }
     .bb-band { display: none; }
     .vwap-line { fill: none; stroke: #8f78b8; stroke-width: 1.45; stroke-dasharray: 5 4; }
-    .macd-line { fill: none; stroke: var(--green); stroke-width: 1.7; }
-    .dea-line { fill: none; stroke: var(--red); stroke-width: 1.5; }
-    .macd-hist-pos { fill: rgba(20, 122, 72, 0.52); }
-    .macd-hist-neg { fill: rgba(183, 55, 52, 0.52); }
-    .stoch-k-line { fill: none; stroke: var(--green); stroke-width: 1.4; }
-    .stoch-d-line { fill: none; stroke: var(--red); stroke-width: 1.2; }
+    .macd-line { fill: none; stroke: var(--color-bullish); stroke-width: 1.7; }
+    .dea-line { fill: none; stroke: var(--color-bearish); stroke-width: 1.5; }
+    .macd-hist-pos { fill: rgba(var(--color-bullish-rgb), 0.52); }
+    .macd-hist-neg { fill: rgba(var(--color-bearish-rgb), 0.52); }
+    .stoch-k-line { fill: none; stroke: var(--color-bullish); stroke-width: 1.4; }
+    .stoch-d-line { fill: none; stroke: var(--color-bearish); stroke-width: 1.2; }
     .trade-line { stroke-width: 1.35; opacity: 0.5; }
     .trade-separator {
       stroke: rgba(39, 48, 60, 0.42);
@@ -852,13 +904,13 @@
       stroke-width: 1.2;
     }
     .trade-summary-label.long .trade-inline-label-bg {
-      fill: rgba(20, 122, 72, 0.07);
-      stroke: rgba(20, 122, 72, 0.34);
+      fill: rgba(var(--color-bullish-rgb), 0.07);
+      stroke: rgba(var(--color-bullish-rgb), 0.34);
       stroke-width: 1.15;
     }
     .trade-summary-label.short .trade-inline-label-bg {
-      fill: rgba(183, 55, 52, 0.07);
-      stroke: rgba(183, 55, 52, 0.34);
+      fill: rgba(var(--color-bearish-rgb), 0.07);
+      stroke: rgba(var(--color-bearish-rgb), 0.34);
       stroke-width: 1.15;
     }
     .trade-summary-divider {
@@ -882,14 +934,14 @@
       font-size: 11px;
       dominant-baseline: middle;
     }
-    .trade-bg-win { fill: rgba(20, 122, 72, 0.10); }
-    .trade-bg-loss { fill: rgba(183, 55, 52, 0.11); }
-    .rally-watch-bg-up { fill: rgba(20, 122, 72, 0.075); stroke: rgba(20, 122, 72, 0.18); stroke-width: 1; }
-    .rally-watch-bg-down { fill: rgba(183, 55, 52, 0.08); stroke: rgba(183, 55, 52, 0.2); stroke-width: 1; }
-    .rally-watch-marker-up { fill: rgba(20, 122, 72, 0.75); }
-    .rally-watch-marker-down { fill: rgba(183, 55, 52, 0.75); }
-    .rally-watch-card.up { border-color: rgba(20, 122, 72, 0.28); background: rgba(20, 122, 72, 0.045); }
-    .rally-watch-card.down { border-color: rgba(183, 55, 52, 0.3); background: rgba(183, 55, 52, 0.05); }
+    .trade-bg-win { fill: rgba(var(--color-bullish-rgb), 0.10); }
+    .trade-bg-loss { fill: rgba(var(--color-bearish-rgb), 0.11); }
+    .rally-watch-bg-up { fill: rgba(var(--color-bullish-rgb), 0.075); stroke: rgba(var(--color-bullish-rgb), 0.18); stroke-width: 1; }
+    .rally-watch-bg-down { fill: rgba(var(--color-bearish-rgb), 0.08); stroke: rgba(var(--color-bearish-rgb), 0.2); stroke-width: 1; }
+    .rally-watch-marker-up { fill: rgba(var(--color-bullish-rgb), 0.75); }
+    .rally-watch-marker-down { fill: rgba(var(--color-bearish-rgb), 0.75); }
+    .rally-watch-card.up { border-color: rgba(var(--color-bullish-rgb), 0.28); background: rgba(var(--color-bullish-rgb), 0.045); }
+    .rally-watch-card.down { border-color: rgba(var(--color-bearish-rgb), 0.3); background: rgba(var(--color-bearish-rgb), 0.05); }
     .rally-watch-card.neutral { border-color: var(--line); }
     .rally-watch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     .rally-watch-score { padding: 8px; border-radius: 7px; background: rgba(255,255,255,.58); border: 1px solid rgba(39,48,60,.1); }
@@ -899,18 +951,18 @@
     .price-levels-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
     .price-level-row { display: grid; grid-template-columns: 28px 64px 1fr; gap: 5px; align-items: center; font-size: 11px; padding: 3px 0; border-bottom: 1px solid rgba(39,48,60,.07); }
     .price-level-row.strong { font-weight: 800; }
-    .price-level-row .star { color: #c98216; font-weight: 900; }
+    .price-level-row .star { color: var(--color-warning); font-weight: 900; }
     .price-targets { margin-top: 8px; color: var(--muted); font-size: 11px; }
-    .price-level-line-support { stroke: rgba(20, 122, 72, 0.62); stroke-dasharray: 5 4; }
-    .price-level-line-resistance { stroke: rgba(183, 55, 52, 0.62); stroke-dasharray: 5 4; }
+    .price-level-line-support { stroke: rgba(var(--color-bullish-rgb), 0.62); stroke-dasharray: 5 4; }
+    .price-level-line-resistance { stroke: rgba(var(--color-bearish-rgb), 0.62); stroke-dasharray: 5 4; }
     .price-level-label { font-size: 10px; font-weight: 800; paint-order: stroke fill; stroke: rgba(255,255,255,.9); stroke-width: 2px; }
     .trade-entry, .trade-exit, .trade-annotation { cursor: pointer; }
     .trade-leader { stroke-width: 0.8; opacity: 0.32; }
     .trade-anchor { stroke: white; stroke-width: 1.2; opacity: 0.82; }
     .trade-label-bg { fill: rgba(255, 255, 255, 0.78); stroke-width: 0.8; opacity: 0.86; }
     .trade-label-text { font-size: 10px; font-weight: 600; dominant-baseline: middle; opacity: 0.86; }
-    .measure-range-profit { fill: rgba(20, 122, 72, 0.14); stroke: rgba(20, 122, 72, 0.42); stroke-width: 1; pointer-events: none; }
-    .measure-range-loss { fill: rgba(183, 55, 52, 0.14); stroke: rgba(183, 55, 52, 0.42); stroke-width: 1; pointer-events: none; }
+    .measure-range-profit { fill: rgba(var(--color-bullish-rgb), 0.14); stroke: rgba(var(--color-bullish-rgb), 0.42); stroke-width: 1; pointer-events: none; }
+    .measure-range-loss { fill: rgba(var(--color-bearish-rgb), 0.14); stroke: rgba(var(--color-bearish-rgb), 0.42); stroke-width: 1; pointer-events: none; }
     .measure-point { fill: #111827; stroke: white; stroke-width: 2; pointer-events: none; }
     .selected { stroke: #111; stroke-width: 3; }
     .trade-annotation.selected .trade-label-bg { stroke: #111; stroke-width: 1.4; opacity: 1; }
@@ -947,8 +999,8 @@
       border-top: 1px solid var(--line);
     }
     .tooltip-emphasis { font-weight: 800; }
-    .tooltip-positive { color: var(--green); font-weight: 800; }
-    .tooltip-negative { color: var(--red); font-weight: 800; }
+    .tooltip-positive { color: var(--color-bullish); font-weight: 800; }
+    .tooltip-negative { color: var(--color-bearish); font-weight: 800; }
     .tooltip-muted-value { color: var(--muted); }
     .signal-badges {
       display: flex;
@@ -1091,6 +1143,8 @@
       .calendar-pnl { font-size: 11px; }
       aside { grid-template-columns: 1fr; }
       .live-grid { grid-template-columns: 1fr; }
+      .live-section-grid,
+      .live-section.action .live-section-grid { grid-template-columns: 1fr; }
       .live-indicator-grid { grid-template-columns: 1fr; }
       .live-signals-card { grid-column: auto; }
       .ask-gpt-row input { flex-basis: 100%; }
@@ -1103,6 +1157,18 @@
       .header-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .settings-grid { grid-template-columns: 1fr; }
       h1 { font-size: 18px; }
+    }
+    @media (max-width: 720px) {
+      .live-grid,
+      .live-section-grid,
+      .live-section.action .live-section-grid,
+      .price-levels-grid,
+      .rally-watch-grid {
+        grid-template-columns: 1fr;
+      }
+      .live-section { padding: 8px; }
+      .live-card { min-height: 0; }
+      .live-signals-card { grid-column: auto; }
     }
   </style>
 </head>
@@ -1582,7 +1648,6 @@
       ['macd', 'MACD'],
       ['stochRsi', 'StochRSI'],
       ['signals', 'Signals'],
-      ['source', 'Analysis source'],
       ['candlesTable', 'Live candles table']
     ];
     const defaultLiveDisplay = Object.fromEntries(liveDisplayOptions.map(([key]) => [key, true]));
@@ -2753,6 +2818,71 @@
       liveSignalHistory = liveSignalHistory.filter(s => visibleTimes.has(s.time)).slice(-80);
     }
 
+    function liveFollowedStrategyPnl(data = latestLiveData || {}) {
+      const bars = data.bars || liveBars || [];
+      const latestBar = bars[bars.length - 1] || {};
+      const latestPrice = Number(data.price ?? latestBar.close);
+      const latestDay = String(latestBar.time_key || data.analysis?.asOf || '').slice(0, 10);
+      const priceByTime = new Map(bars.map(bar => [bar.time_key, Number(bar.close)]));
+      const indexByTime = new Map(bars.map((bar, index) => [bar.time_key, index]));
+      const currentAction = data.strategySignal?.markerAction || data.strategySignal?.action || liveStrategySignal?.markerAction || liveStrategySignal?.action;
+      const candidates = [...liveSignalHistory];
+      if (['BUY', 'SELL'].includes(currentAction)) {
+        candidates.push({ ...(data.strategySignal || liveStrategySignal), action: currentAction });
+      }
+      const currentStrategy = currentLiveStrategyId();
+      const seen = new Set();
+      const baseSignals = candidates
+        .filter(signal => ['BUY', 'SELL'].includes(signal.action) && signal.time)
+        .filter(signal => !latestDay || String(signal.time).startsWith(latestDay))
+        .filter(signal => !signal.strategy || signal.strategy === currentStrategy);
+      const dedupeSource = baseSignals.length ? baseSignals : candidates
+        .filter(signal => ['BUY', 'SELL'].includes(signal.action) && signal.time)
+        .filter(signal => !latestDay || String(signal.time).startsWith(latestDay));
+      const signals = dedupeSource
+        .filter(signal => {
+          const key = `${signal.time}:${signal.action}:${signal.strategy || ''}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => (indexByTime.get(a.time) ?? Number.MAX_SAFE_INTEGER) - (indexByTime.get(b.time) ?? Number.MAX_SAFE_INTEGER));
+      let position = null;
+      let entryPrice = 0;
+      let entryTime = '';
+      let pnl = 0;
+      let closedTrades = 0;
+      signals.forEach(signal => {
+        const action = signal.action;
+        const price = Number(signal.price ?? priceByTime.get(signal.time));
+        if (!Number.isFinite(price)) return;
+        const side = action === 'BUY' ? 'LONG' : 'SHORT';
+        if (!position) {
+          position = side;
+          entryPrice = price;
+          entryTime = signal.time;
+          return;
+        }
+        if (position === side) return;
+        pnl += position === 'LONG' ? price - entryPrice : entryPrice - price;
+        closedTrades += 1;
+        position = side;
+        entryPrice = price;
+        entryTime = signal.time;
+      });
+      if (position && Number.isFinite(latestPrice)) {
+        pnl += position === 'LONG' ? latestPrice - entryPrice : entryPrice - latestPrice;
+      }
+      return {
+        total: pnl,
+        closedTrades,
+        openSide: position,
+        openPrice: entryPrice,
+        openTime: entryTime,
+        signalCount: signals.length
+      };
+    }
+
     function renderLiveTrend(data) {
       const a = data.analysis || {};
       const levels = a.levels || {};
@@ -2764,40 +2894,61 @@
       const priceLevels = a.priceLevels || {};
       const rallyBest = bestRallyWatch(rallyWatch);
       const bbMove = bbMidMoveMeta((data.bars || []).slice(-1)[0], data.bars || []);
-      const tone = a.bias === 'bullish' ? 'profit' : a.bias === 'bearish' ? 'loss' : '';
+      const biasTone = a.bias === 'bullish' ? 'bullish' : a.bias === 'bearish' ? 'bearish' : 'neutral';
+      const biasTextTone = a.bias === 'bullish' ? 'profit' : a.bias === 'bearish' ? 'loss' : '';
+      const strategyTone = ['bullish', 'bearish', 'warning', 'neutral'].includes(strategySignal.tone) ? strategySignal.tone : 'neutral';
+      const riskTone = risk.passed ? 'bullish' : 'warning';
+      const macdTone = Number(momentum.macdHist || 0) >= 0 ? 'bullish' : 'bearish';
+      const bbMoveTone = bbMove.big ? (Number(bbMove.move || 0) >= 0 ? 'bullish' : 'bearish') : 'neutral';
+      const signalItems = (a.signals || []).filter(signal => String(typeof signal === 'string' ? signal : signal.text || '').trim().toUpperCase() !== 'NONE');
+      const signalsHtml = signalItems.map(s => signalChipHtml(s)).join('') || '<span class="live-signal neutral" title="No directional or entry signal is active.">Signal WAIT</span>';
+      const signalReason = a.entryReason || (a.reasoning || []).slice(0, 2).join(' ');
+      const followedPnl = liveFollowedStrategyPnl(data);
+      const followedTone = followedPnl.total >= 0 ? 'bullish' : 'bearish';
       const card = (key, html) => liveDisplay[key] === false ? '' : html;
+      const section = (title, className, html) => {
+        const body = String(html || '').trim();
+        return body ? `<section class="live-section ${esc(className)}"><h2>${esc(title)}</h2><div class="live-section-grid">${body}</div></section>` : '';
+      };
       liveStreamDot.className = 'stream-dot on';
       liveTrendMeta.textContent = `${data.symbol} ${data.ktype} | $${fmtLevel(data.price)} | ${data.candles} candles | ${a.asOf || 'n/a'}`;
-      liveTrendPanel.innerHTML = `
+      const actionCards = `
         ${card('currentPrice', `
-        <div class="live-card">
+        <div class="live-card priority">
           <h3>Current Price</h3>
           <strong class="price-now">$${fmtLevel(data.price)}</strong>
           <p>${esc(data.symbol || '')} | ${esc(a.asOf || '')}</p>
         </div>`)}
         ${card('strategySignal', `
-        <div class="live-card">
+        <div class="live-card ${esc(strategyTone)}">
           <h3>Strategy Signal</h3>
-          <strong><span class="strategy-signal ${esc(strategySignal.tone || 'neutral')}">${esc(strategySignal.action || 'WAIT')}</span></strong>
+          <strong><span class="strategy-signal ${esc(strategyTone)}">${esc(strategySignal.action || 'WAIT')}</span></strong>
           <p>${esc(a.tradeState || 'COMPLETE')} | Grade ${esc(a.tradeGrade || 'F')} | R/R ${fmtLevel(risk.riskReward)}</p>
         </div>`)}
+        <div class="live-card ${esc(followedTone)}">
+          <h3>Followed Strategy P/L</h3>
+          <strong class="${followedPnl.total >= 0 ? 'profit' : 'loss'}">${fmtMoney(followedPnl.total * shares())}</strong>
+          <p>${fmtMoney(followedPnl.total)}/sh | ${followedPnl.closedTrades} closed${followedPnl.openSide ? ` | open ${esc(followedPnl.openSide)} @ ${fmtLevel(followedPnl.openPrice)}` : ''}</p>
+        </div>
+        ${card('signals', `
+        <div class="live-card live-signals-card">
+          <h3>Signal Details</h3>
+          <div class="live-signals">${signalsHtml}</div>
+          <p style="margin-top: 7px;">${esc(signalReason || 'Waiting for strategy confirmation.')}</p>
+        </div>`)}
         ${card('rallyWatch', rallyWatchCardHtml(rallyWatch, rallyBest))}
+        ${card('risk', `
+        <div class="live-card ${esc(riskTone)}">
+          <h3>Risk Layer</h3>
+          <strong class="${risk.passed ? 'profit' : ''}" title="${esc(signalDefinition('Risk Layer'))}">${risk.passed ? 'PASS' : 'WAIT'}</strong>
+          <p>Position ${esc(risk.positionSize ?? 0)}% | ATR ${fmtLevel(risk.atr14)} | 5m range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
+        </div>`)}
+      `;
+      const levelsCards = `
         ${card('priceLevels', priceLevelsCardHtml(priceLevels))}
-        ${card('bias', `
-        <div class="live-card">
-          <h3>Bias</h3>
-          <strong class="${tone}">${esc(a.bias || 'neutral')} ${a.confidence || 0}%</strong>
-          <p>${esc(a.direction || 'range')} | bull/bear ${esc(a.score ?? '0/0')}.</p>
-        </div>`)}
-        ${card('movement', `
-        <div class="live-card">
-          <h3>Possible Movement</h3>
-          <p>${esc(a.possibleMovement || 'No scenario available yet.')}</p>
-          <p style="margin-top: 6px;">ATR ${fmtLevel(risk.atr14)} | 5m expected range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
-        </div>`)}
         ${card('levels', `
         <div class="live-card">
-          <h3>Levels</h3>
+          <h3>Indicator Levels</h3>
           <div class="live-levels">
             <div>Last <span>${fmtLevel(levels.last)}</span></div>
             <div>VWAP <span>${fmtLevel(levels.vwap)}</span></div>
@@ -2816,14 +2967,22 @@
         ${card('probabilities', `
         <div class="live-card">
           <h3>Probabilities</h3>
-          <p>Bull cont ${esc(probs.bullishContinuation ?? 0)}% | Bear cont ${esc(probs.bearishContinuation ?? 0)}%</p>
-          <p>Bull rev ${esc(probs.bullishReversal ?? 0)}% | Bear rev ${esc(probs.bearishReversal ?? 0)}% | Chop ${esc(probs.sideways ?? 0)}%</p>
+          <p>Bull cont <span class="profit">${esc(probs.bullishContinuation ?? 0)}%</span> | Bear cont <span class="loss">${esc(probs.bearishContinuation ?? 0)}%</span></p>
+          <p>Bull rev <span class="profit">${esc(probs.bullishReversal ?? 0)}%</span> | Bear rev <span class="loss">${esc(probs.bearishReversal ?? 0)}%</span> | Chop ${esc(probs.sideways ?? 0)}%</p>
         </div>`)}
-        ${card('risk', `
+      `;
+      const contextCards = `
+        ${card('bias', `
+        <div class="live-card ${esc(biasTone)}">
+          <h3>Bias</h3>
+          <strong class="${biasTextTone}">${esc(a.bias || 'neutral')} ${a.confidence || 0}%</strong>
+          <p>${esc(a.direction || 'range')} | bull/bear ${esc(a.score ?? '0/0')}.</p>
+        </div>`)}
+        ${card('movement', `
         <div class="live-card">
-          <h3>Risk Layer</h3>
-          <strong class="${risk.passed ? 'profit' : 'loss'}" title="${esc(signalDefinition('Risk Layer'))}">${risk.passed ? 'PASS' : 'WAIT'}</strong>
-          <p>Position ${esc(risk.positionSize ?? 0)}% | ATR ${fmtLevel(risk.atr14)} | 5m range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
+          <h3>Possible Movement</h3>
+          <p>${esc(a.possibleMovement || 'No scenario available yet.')}</p>
+          <p style="margin-top: 6px;">ATR ${fmtLevel(risk.atr14)} | 5m expected range ${fmtLevel(risk.expectedFiveMinuteRange)}</p>
         </div>`)}
         ${card('momentum', `
         <div class="live-card">
@@ -2833,7 +2992,7 @@
           <p>StochRSI ${esc(momentum.stochRsiK ?? 'n/a')} / ${esc(momentum.stochRsiD ?? 'n/a')}</p>
         </div>`)}
         ${card('bbMidMove', `
-        <div class="live-card">
+        <div class="live-card ${esc(bbMoveTone)}">
           <h3>BB Mid Move</h3>
           <strong class="${bbMove.big ? 'profit' : ''}">${fmtPct(bbMove.move)}</strong>
           <p>Session avg ${fmtPct(bbMove.avg)} | ${Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x avg` : 'n/a'}${bbMove.big ? ' | big move' : ''}</p>
@@ -2844,7 +3003,7 @@
           <div class="indicator-line">${liveIndicatorStatusHtml(data)}</div>
         </div>`)}
         ${card('macd', `
-        <div class="live-card">
+        <div class="live-card ${esc(macdTone)}">
           <h3>MACD</h3>
           <strong class="${Number(momentum.macdHist || 0) >= 0 ? 'profit' : 'loss'}">${fmtLevel(momentum.macdHist)}</strong>
           <p>Histogram. Positive favors upside momentum; negative favors downside momentum.</p>
@@ -2855,19 +3014,12 @@
           <strong>${fmtLevel(momentum.stochRsiK)} / ${fmtLevel(momentum.stochRsiD)}</strong>
           <p>%K / %D. Watch crosses near 20 and 80 for exhaustion or continuation clues.</p>
         </div>`)}
-        ${card('signals', `
-        <div class="live-card live-signals-card">
-          <h3>Signals</h3>
-          <div class="live-signals">${(a.signals || []).map(s => signalChipHtml(s)).join('') || '<span class="live-signal neutral" title="No directional or entry signal is active.">Signal WAIT</span>'}</div>
-          <p style="margin-top: 7px;">${esc(a.entryReason || (a.reasoning || []).slice(0, 3).join(' '))}</p>
-          <p style="margin-top: 5px;">${esc(a.exitReason || '')}</p>
-        </div>`)}
-        ${card('source', `
-        <div class="live-card">
-          <h3>Analysis Source</h3>
-          <p>${esc(a.note || 'Rule-based local indicator read. GPT is not analyzing these candles.')}</p>
-        </div>`)}
       `;
+      liveTrendPanel.innerHTML = [
+        section('Action / Watch', 'action', actionCards),
+        section('Price Levels', 'levels', levelsCards),
+        section('Market Context', 'context', contextCards)
+      ].join('');
       if (liveCandlesDetails) liveCandlesDetails.hidden = liveDisplay.candlesTable === false;
     }
 
@@ -2977,7 +3129,7 @@
       const resistances = priceLevels.resistances || [];
       const invalidations = priceLevels.invalidations || [];
       return `
-        <div class="live-card">
+        <div class="live-card price-levels-card">
           <h3>Price Levels</h3>
           <div class="price-levels-grid">
             <div><strong class="profit">Support</strong>${supports.length ? supports.slice(0, 4).map(priceLevelRow).join('') : '<p>No nearby support.</p>'}</div>
@@ -2993,8 +3145,9 @@
 
     function signalTone(text = '') {
       const s = String(text).toLowerCase();
-      if (s.includes('above') || s.includes('bull') || s.includes('rising') || s.includes('increasing') || s.includes('holding')) return 'bullish';
-      if (s.includes('below') || s.includes('bear') || s.includes('falling') || s.includes('fading') || s.includes('stretched high')) return 'bearish';
+      if (s.includes('warning') || s.includes('risk') || s.includes('overextended') || s.includes('low volume') || s.includes('against') || s.includes('spike') || s.includes('stretched high')) return 'warning';
+      if (s.includes('short') || s.includes('sell') || s.includes('bear') || s.includes('breakdown') || s.includes('down') || s.includes('below') || s.includes('falling') || s.includes('fading') || s.includes('loss')) return 'bearish';
+      if (s.includes('long') || s.includes('buy') || s.includes('bull') || s.includes('breakout') || s.includes('up') || s.includes('above') || s.includes('rising') || s.includes('increasing') || s.includes('holding')) return 'bullish';
       return 'neutral';
     }
 
