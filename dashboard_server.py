@@ -690,6 +690,38 @@ def _moomoo_quote_context():
     return futu.OpenQuoteContext(host="127.0.0.1", port=11111), futu
 
 
+def _moomoo_kline_type(futu, ktype: str):
+    key = str(ktype or "1m").lower()
+    names = {
+        "1m": "K_1M",
+        "3m": "K_3M",
+        "5m": "K_5M",
+        "15m": "K_15M",
+        "30m": "K_30M",
+        "60m": "K_60M",
+        "1d": "K_DAY",
+        "1w": "K_WEEK",
+    }
+    name = names.get(key, "K_1M")
+    return getattr(futu.KLType, name, futu.KLType.K_1M)
+
+
+def _moomoo_subtype(futu, ktype: str):
+    key = str(ktype or "1m").lower()
+    names = {
+        "1m": "K_1M",
+        "3m": "K_3M",
+        "5m": "K_5M",
+        "15m": "K_15M",
+        "30m": "K_30M",
+        "60m": "K_60M",
+        "1d": "K_DAY",
+        "1w": "K_WEEK",
+    }
+    name = names.get(key, "K_1M")
+    return getattr(futu.SubType, name, futu.SubType.K_1M)
+
+
 def _moomoo_kline_bars(df) -> list[dict]:
     if df is None or getattr(df, "empty", True):
         return []
@@ -739,7 +771,9 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     if strategy_id.rsplit("_", 1)[0] not in STRATEGY_NAMES:
         strategy_id = f"bb_mid_cross_{str(ktype or '1m')}"
     timeframe = _strategy_timeframe(strategy_id, str(ktype or "1m"))
-    signal_bars = bars if timeframe == "1m" else _compute_derived_indicators(_timeframe_bars(bars, timeframe))
+    stream_minutes = _bars_interval_minutes(bars)
+    signal_minutes = _timeframe_minutes(timeframe)
+    signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe))
     bar = signal_bars[-1]
     prev = signal_bars[-2] if len(signal_bars) > 1 else None
     side, confidence, reason = _fast_signal(strategy_id, bar, prev, signal_bars, len(signal_bars) - 1)
@@ -1080,7 +1114,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     state = dict(LIVE_STATE)
                 symbol = _moomoo_symbol(state.get("symbol") or "US.INTC")
                 extended_time = bool(state.get("extended_time", True))
-                ret, msg = quote_ctx.subscribe([symbol], [futu.SubType.K_1M], is_first_push=False, subscribe_push=False, extended_time=extended_time)
+                ktype = str(state.get("ktype") or "1m")
+                sub_type = _moomoo_subtype(futu, ktype)
+                kl_type = _moomoo_kline_type(futu, ktype)
+                ret, msg = quote_ctx.subscribe([symbol], [sub_type], is_first_push=False, subscribe_push=False, extended_time=extended_time)
                 if ret != futu.RET_OK:
                     self._send_sse_event({"error": f"Moomoo subscribe failed: {msg}", "symbol": symbol})
                     return
@@ -1089,7 +1126,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         state = dict(LIVE_STATE)
                     if not state.get("active") or _moomoo_symbol(state.get("symbol")) != symbol:
                         break
-                    ret, data = quote_ctx.get_cur_kline(symbol, 240, ktype=futu.KLType.K_1M)
+                    current_ktype = str(state.get("ktype") or ktype)
+                    if current_ktype != ktype:
+                        ktype = current_ktype
+                        sub_type = _moomoo_subtype(futu, ktype)
+                        kl_type = _moomoo_kline_type(futu, ktype)
+                        ret, msg = quote_ctx.subscribe([symbol], [sub_type], is_first_push=False, subscribe_push=False, extended_time=extended_time)
+                        if ret != futu.RET_OK:
+                            self._send_sse_event({"error": f"Moomoo subscribe failed: {msg}", "symbol": symbol})
+                            time.sleep(2)
+                            continue
+                    ret, data = quote_ctx.get_cur_kline(symbol, 240, ktype=kl_type)
                     if ret != futu.RET_OK:
                         self._send_sse_event({"error": f"Moomoo kline failed: {data}", "symbol": symbol})
                         time.sleep(2)
@@ -1180,7 +1227,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             quote_ctx = None
             try:
                 quote_ctx, futu = _moomoo_quote_context()
-                ret, msg = quote_ctx.subscribe([symbol], [futu.SubType.K_1M], is_first_push=False, subscribe_push=False, extended_time=extended_time)
+                ret, msg = quote_ctx.subscribe([symbol], [_moomoo_subtype(futu, ktype)], is_first_push=False, subscribe_push=False, extended_time=extended_time)
                 if ret != futu.RET_OK:
                     self._send_json({"ok": False, "message": f"Moomoo subscribe failed: {msg}"}, 502)
                     return

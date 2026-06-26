@@ -801,6 +801,9 @@
     .candle-wick-up { stroke: #147a48; stroke-width: 1; }
     .candle-wick-down { stroke: #b73734; stroke-width: 1; }
     .bb-mid { fill: none; stroke: #c98216; stroke-width: 1.9; }
+    .bb-mid-turn-up { fill: var(--green); stroke: white; stroke-width: 1.4; }
+    .bb-mid-turn-down { fill: var(--red); stroke: white; stroke-width: 1.4; }
+    .bb-mid-turn-flat { fill: #9aa3af; stroke: white; stroke-width: 1; opacity: 0.74; }
     .bb-upper { fill: none; stroke: #8b5cf6; stroke-width: 1.55; }
     .bb-lower { fill: none; stroke: #7fc8ff; stroke-width: 1.55; }
     .bb-band { display: none; }
@@ -3304,6 +3307,7 @@
         addPath(pathFor(bars.map((b, i) => [i, b.vwap]), x, y), 'vwap-line');
         drawCandles(bars, x, y, liveDrawW, liveSlotCount);
         addPath(pathFor(bars.map((b, i) => [i, b.bb_mid]), x, y), 'bb-mid');
+        drawBbMidTurnMarkers(bars, x, priceBottom);
         drawLiveMeasurement(bars, x, y, priceTop, priceBottom);
         drawLiveSignalMarkers(bars, x, y, priceTop, priceBottom);
         drawLiveLastPrice(bars, x, y, W, margin);
@@ -3981,6 +3985,7 @@
       drawSessionSeparators(bars, x, priceTop, priceBottom);
       drawSpikeMarkers(bars, x, y);
       addPath(pathFor(bars.map((b, i) => [i, b.bb_mid]), x, y), 'bb-mid');
+      drawBbMidTurnMarkers(bars, x, priceBottom);
       drawHistoricalLastPrice(bars, y, W, margin);
 
       drawMeasurement(bars, x, y, priceTop, priceBottom);
@@ -4062,6 +4067,49 @@
         marker.setAttribute('font-size', '14');
         marker.textContent = '!';
         svg.appendChild(marker);
+      });
+    }
+    function bbMidSlopeSign(bar) {
+      const slope = Number(bar?.bb_mid_slope ?? bar?.bb_slope);
+      if (!Number.isFinite(slope) || Math.abs(slope) < 1e-9) return 0;
+      return slope > 0 ? 1 : -1;
+    }
+    function drawBbMidTurnMarkers(bars, x, bottom, options = {}) {
+      const target = window.__codexLiveSvgTarget || svg;
+      const y = bottom - (options.offset ?? 18);
+      const radius = options.radius ?? 4.5;
+      const neutralRadius = Math.max(2.5, radius - 1.5);
+      let previousSign = 0;
+      bars.forEach((bar, index) => {
+        const sign = bbMidSlopeSign(bar);
+        const prev = bars[index - 1];
+        const mid = Number(bar?.bb_mid);
+        const prevMid = Number(prev?.bb_mid);
+        const sameMid = index > 0 && Number.isFinite(mid) && Number.isFinite(prevMid) && mid === prevMid;
+        const flatMid = index > 0 && !sign && Number.isFinite(mid) && Number.isFinite(prevMid);
+        const changed = previousSign && sign && sign !== previousSign;
+        if (!changed && !sameMid && !flatMid) {
+          if (sign) previousSign = sign;
+          return;
+        }
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', x(index));
+        dot.setAttribute('cy', y);
+        dot.setAttribute('r', changed ? radius : neutralRadius);
+        dot.setAttribute('class', changed ? (sign > 0 ? 'bb-mid-turn-up' : 'bb-mid-turn-down') : 'bb-mid-turn-flat');
+        dot.setAttribute('tabindex', '0');
+        dot.setAttribute('aria-label', changed
+          ? `BB mid turned ${sign > 0 ? 'up' : 'down'} at ${bar.time_key}`
+          : sameMid ? `BB mid value unchanged at ${bar.time_key}` : `BB mid is flat at ${bar.time_key}`);
+        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        title.textContent = changed
+          ? `BB mid turned ${sign > 0 ? 'up' : 'down'} at ${fmtTime(bar.time_key)} | move ${fmtPct(bbMidMovePct(bar))}`
+          : sameMid ? `BB mid value unchanged at ${fmtTime(bar.time_key)} | ${fmtLevel(mid)}` : `BB mid flat at ${fmtTime(bar.time_key)} | move ${fmtPct(bbMidMovePct(bar))}`;
+        dot.appendChild(title);
+        target.appendChild(dot);
+        if (sign) {
+          previousSign = sign;
+        }
       });
     }
     function drawHistoricalLastPrice(bars, y, W, margin) {
