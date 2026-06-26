@@ -10,7 +10,7 @@ class StochRSI(Indicator):
     display_name = "Stochastic RSI"
     description = "Stochastic oscillator applied to RSI for momentum crosses."
     category = "momentum"
-    default_params = {"rsi_period": 14, "stoch_period": 14, "k_period": 3, "d_period": 3}
+    default_params = {"rsi_period": 5, "stoch_period": 5, "k_period": 3, "d_period": 3}
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = RSI(periods=[self.params["rsi_period"]]).compute(df)

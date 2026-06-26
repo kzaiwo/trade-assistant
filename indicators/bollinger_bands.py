@@ -10,7 +10,7 @@ class BollingerBands(Indicator):
     display_name = "Bollinger Bands"
     description = "Volatility bands around a moving average."
     category = "volatility"
-    default_params = {"period": 20, "std_dev": 2}
+    default_params = {"period": 15, "std_dev": 2}
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()

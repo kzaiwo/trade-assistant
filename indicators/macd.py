@@ -8,7 +8,7 @@ class MACD(Indicator):
     display_name = "MACD"
     description = "Moving average convergence divergence trend momentum."
     category = "momentum"
-    default_params = {"fast": 12, "slow": 26, "signal": 9}
+    default_params = {"fast": 8, "slow": 21, "signal": 5}
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()

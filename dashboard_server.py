@@ -17,8 +17,19 @@ RESULTS_PATH = ROOT / "results/backtest_summary.json"
 SYMBOLS = ["AAPL", "TSLA", "MU", "INTC"]
 STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close", "mean_reversion"]
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "60m"]
-BARS_CACHE: dict[tuple[str, str, str, str], tuple[list[dict], Path]] = {}
-LIVE_STATE = {"active": False, "symbol": "US.INTC", "extended_time": True, "strategy": "bb_mid_cross_1m", "ktype": "1m"}
+BARS_CACHE: dict[tuple[str, str, str, str, tuple[int, float, int, int, int, int, int, int, int]], tuple[list[dict], Path]] = {}
+DEFAULT_INDICATOR_SETTINGS = {
+    "bb_period": 15,
+    "bb_std_dev": 2.0,
+    "stoch_rsi_period": 5,
+    "stoch_period": 5,
+    "stoch_k_period": 3,
+    "stoch_d_period": 3,
+    "macd_fast": 8,
+    "macd_slow": 21,
+    "macd_signal": 5,
+}
+LIVE_STATE = {"active": False, "symbol": "US.INTC", "extended_time": True, "strategy": "bb_mid_cross_1m", "ktype": "1m", "indicator_settings": DEFAULT_INDICATOR_SETTINGS}
 LIVE_LOCK = threading.Lock()
 BB_MID_FLAT_TOLERANCE = 0.001
 BB_MID_FIRST_ENTRY_TIME = "09:45"
@@ -78,8 +89,58 @@ def _read_json(path: Path):
         return json.load(fh)
 
 
-def _load_bars(symbol: str, ktype: str, start: str, end: str) -> tuple[list[dict], Path]:
-    cache_key = (symbol, ktype, start, end)
+def _int_setting(payload: dict, key: str, minimum: int = 1, maximum: int = 500) -> int:
+    try:
+        value = int(payload.get(key, DEFAULT_INDICATOR_SETTINGS[key]))
+    except (TypeError, ValueError):
+        value = int(DEFAULT_INDICATOR_SETTINGS[key])
+    return max(minimum, min(maximum, value))
+
+
+def _float_setting(payload: dict, key: str, minimum: float = 0.1, maximum: float = 10.0) -> float:
+    try:
+        value = float(payload.get(key, DEFAULT_INDICATOR_SETTINGS[key]))
+    except (TypeError, ValueError):
+        value = float(DEFAULT_INDICATOR_SETTINGS[key])
+    return max(minimum, min(maximum, value))
+
+
+def _indicator_settings(payload: dict | None = None) -> dict:
+    raw = payload.get("indicatorSettings") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raw = payload.get("indicator_settings") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "bb_period": _int_setting(raw, "bb_period", 2, 200),
+        "bb_std_dev": _float_setting(raw, "bb_std_dev", 0.1, 6.0),
+        "stoch_rsi_period": _int_setting(raw, "stoch_rsi_period", 2, 200),
+        "stoch_period": _int_setting(raw, "stoch_period", 2, 200),
+        "stoch_k_period": _int_setting(raw, "stoch_k_period", 1, 100),
+        "stoch_d_period": _int_setting(raw, "stoch_d_period", 1, 100),
+        "macd_fast": _int_setting(raw, "macd_fast", 1, 200),
+        "macd_slow": _int_setting(raw, "macd_slow", 2, 300),
+        "macd_signal": _int_setting(raw, "macd_signal", 1, 200),
+    }
+
+
+def _indicator_settings_key(settings: dict) -> tuple[int, float, int, int, int, int, int, int, int]:
+    return (
+        settings["bb_period"],
+        settings["bb_std_dev"],
+        settings["stoch_rsi_period"],
+        settings["stoch_period"],
+        settings["stoch_k_period"],
+        settings["stoch_d_period"],
+        settings["macd_fast"],
+        settings["macd_slow"],
+        settings["macd_signal"],
+    )
+
+
+def _load_bars(symbol: str, ktype: str, start: str, end: str, indicator_settings: dict | None = None) -> tuple[list[dict], Path]:
+    settings = _indicator_settings({"indicatorSettings": indicator_settings or {}})
+    cache_key = (symbol, ktype, start, end, _indicator_settings_key(settings))
     if cache_key in BARS_CACHE:
         return BARS_CACHE[cache_key]
     folder = DATA_ROOT / symbol
@@ -113,7 +174,8 @@ def _load_bars(symbol: str, ktype: str, start: str, end: str) -> tuple[list[dict
     if native_timeframe and minutes > 1:
         filtered = _close_labeled_bars(filtered, minutes)
     if not native_timeframe and minutes > 1:
-        filtered = _compute_derived_indicators(_timeframe_bars(filtered, ktype))
+        filtered = _timeframe_bars(filtered, ktype)
+    filtered = _compute_derived_indicators(filtered, settings)
     BARS_CACHE[cache_key] = (filtered, files[0])
     return filtered, files[0]
 
@@ -188,8 +250,9 @@ def _run_dashboard_strategies(payload: dict) -> dict:
     bars = payload.get("bars") or []
     symbol = _plain_symbol(str(payload.get("symbol") or "INTC"))
     ktype = str(payload.get("ktype") or "1m")
+    indicator_settings = _indicator_settings(payload)
     if not bars and payload.get("start") and payload.get("end"):
-        bars, _ = _load_bars(symbol, ktype, str(payload.get("start") or ""), str(payload.get("end") or ""))
+        bars, _ = _load_bars(symbol, ktype, str(payload.get("start") or ""), str(payload.get("end") or ""), indicator_settings)
     session = str(payload.get("session") or "all")
     bars = _filter_session(bars, session)
     if not bars:
@@ -602,15 +665,17 @@ def _ema(values: list[float | None], span: int) -> list[float | None]:
     return out
 
 
-def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
+def _compute_derived_indicators(bars: list[dict], indicator_settings: dict | None = None) -> list[dict]:
     if not bars:
         return bars
+    settings = _indicator_settings({"indicatorSettings": indicator_settings or {}})
     out = [dict(bar) for bar in bars]
     closes = [_num(bar.get("close")) for bar in out]
     highs = [_num(bar.get("high")) for bar in out]
     lows = [_num(bar.get("low")) for bar in out]
     volumes = [_num(bar.get("volume"), 0) or 0 for bar in out]
-    period = 20
+    period = settings["bb_period"]
+    std_dev = settings["bb_std_dev"]
     for i, bar in enumerate(out):
         window = [v for v in closes[max(0, i - period + 1):i + 1] if v is not None]
         if len(window) >= period:
@@ -618,8 +683,8 @@ def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
             variance = sum((v - mid) ** 2 for v in window) / max(1, len(window) - 1)
             std = math.sqrt(variance)
             bar["bb_mid"] = round(mid, 6)
-            bar["bb_upper"] = round(mid + 2 * std, 6)
-            bar["bb_lower"] = round(mid - 2 * std, 6)
+            bar["bb_upper"] = round(mid + std_dev * std, 6)
+            bar["bb_lower"] = round(mid - std_dev * std, 6)
             prev_mid = _num(out[i - 1].get("bb_mid")) if i else None
             slope = mid - prev_mid if prev_mid is not None else None
             bar["bb_mid_slope"] = round(slope, 6) if slope is not None else None
@@ -632,10 +697,10 @@ def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
             bar["bb_upper"] = bar.get("bb_upper")
             bar["bb_lower"] = bar.get("bb_lower")
 
-    ema_fast = _ema(closes, 8)
-    ema_slow = _ema(closes, 21)
+    ema_fast = _ema(closes, settings["macd_fast"])
+    ema_slow = _ema(closes, settings["macd_slow"])
     macd_line = [(a - b) if a is not None and b is not None else None for a, b in zip(ema_fast, ema_slow)]
-    macd_sig = _ema(macd_line, 5)
+    macd_sig = _ema(macd_line, settings["macd_signal"])
     cum_pv_by_day: dict[str, float] = {}
     cum_vol_by_day: dict[str, float] = {}
     gains: list[float] = []
@@ -658,9 +723,10 @@ def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
             change = closes[i] - closes[i - 1]
             gains.append(max(0.0, change))
             losses.append(max(0.0, -change))
-            if i >= 14:
-                avg_gain = sum(gains[i - 13:i + 1]) / 14
-                avg_loss = sum(losses[i - 13:i + 1]) / 14
+            rsi_period = settings["stoch_rsi_period"]
+            if i >= rsi_period:
+                avg_gain = sum(gains[i - rsi_period + 1:i + 1]) / rsi_period
+                avg_loss = sum(losses[i - rsi_period + 1:i + 1]) / rsi_period
                 rsi = 100 if avg_loss == 0 else 100 - (100 / (1 + avg_gain / avg_loss))
                 rsi_values.append(rsi)
             else:
@@ -669,15 +735,23 @@ def _compute_derived_indicators(bars: list[dict]) -> list[dict]:
             tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
             trs = [max((highs[j] or 0) - (lows[j] or 0), abs((highs[j] or 0) - (closes[j - 1] or 0)), abs((lows[j] or 0) - (closes[j - 1] or 0))) for j in range(max(1, i - 13), i + 1)]
             bar["atr14"] = round(sum(trs) / len(trs), 6) if trs else round(tr, 6)
+    stoch_raw: list[float | None] = []
     for i, bar in enumerate(out):
-        rsi_window = [v for v in rsi_values[max(0, i - 13):i + 1] if v is not None]
+        rsi_window = [v for v in rsi_values[max(0, i - settings["stoch_period"] + 1):i + 1] if v is not None]
         if len(rsi_window) >= 2 and rsi_values[i] is not None:
             lo, hi = min(rsi_window), max(rsi_window)
-            k = 50.0 if hi == lo else (rsi_values[i] - lo) / (hi - lo) * 100
-            bar["stoch_rsi_k"] = round(k, 6)
-            k_window = [_num(out[j].get("stoch_rsi_k")) for j in range(max(0, i - 2), i + 1)]
-            k_window = [v for v in k_window if v is not None]
-            bar["stoch_rsi_d"] = round(sum(k_window) / len(k_window), 6) if k_window else None
+            stoch_raw.append(50.0 if hi == lo else (rsi_values[i] - lo) / (hi - lo) * 100)
+        else:
+            stoch_raw.append(None)
+    k_values: list[float | None] = []
+    for i, bar in enumerate(out):
+        k_window = [v for v in stoch_raw[max(0, i - settings["stoch_k_period"] + 1):i + 1] if v is not None]
+        k = sum(k_window) / len(k_window) if k_window else None
+        k_values.append(k)
+        bar["stoch_rsi_k"] = round(k, 6) if k is not None else None
+    for i, bar in enumerate(out):
+        d_window = [v for v in k_values[max(0, i - settings["stoch_d_period"] + 1):i + 1] if v is not None]
+        bar["stoch_rsi_d"] = round(sum(d_window) / len(d_window), 6) if d_window else None
         bar["bb_slope"] = bar.get("bb_mid_slope")
     return out
 
@@ -722,7 +796,7 @@ def _moomoo_subtype(futu, ktype: str):
     return getattr(futu.SubType, name, futu.SubType.K_1M)
 
 
-def _moomoo_kline_bars(df) -> list[dict]:
+def _moomoo_kline_bars(df, indicator_settings: dict | None = None) -> list[dict]:
     if df is None or getattr(df, "empty", True):
         return []
     bars = []
@@ -743,7 +817,7 @@ def _moomoo_kline_bars(df) -> list[dict]:
             }
         )
     bars.sort(key=lambda item: item.get("time_key", ""))
-    return _compute_derived_indicators(bars[-240:])
+    return _compute_derived_indicators(bars[-240:], indicator_settings)
 
 
 def _live_market_state(bar: dict) -> str:
@@ -764,7 +838,7 @@ def _strategy_timeframe(strategy_id: str, fallback: str = "1m") -> str:
     return tail if tail in TIMEFRAMES else fallback
 
 
-def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cross_1m", ktype: str = "1m") -> dict:
+def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cross_1m", ktype: str = "1m", indicator_settings: dict | None = None) -> dict:
     if not bars:
         return {}
     strategy_id = str(strategy_id or "bb_mid_cross_1m")
@@ -773,7 +847,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     timeframe = _strategy_timeframe(strategy_id, str(ktype or "1m"))
     stream_minutes = _bars_interval_minutes(bars)
     signal_minutes = _timeframe_minutes(timeframe)
-    signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe))
+    signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe), indicator_settings)
     base_name = strategy_id.rsplit("_", 1)[0]
     live_label = base_name.replace("_", " ").title()
     live_trades = _fast_trades(strategy_id, live_label, signal_bars, _plain_symbol(symbol), 1)
@@ -800,7 +874,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     stop = close - atr if action == "LONG" else close + atr if action == "SHORT" else None
     target = close + (atr * 2) if action == "LONG" else close - (atr * 2) if action == "SHORT" else None
     state_1m = _live_market_state(bars[-1])
-    bars_5m = _timeframe_bars(bars, "5m")
+    bars_5m = _compute_derived_indicators(_timeframe_bars(bars, "5m"), indicator_settings)
     state_5m = _live_market_state(bars_5m[-1]) if bars_5m else "RANGE_BOUND"
     bullish_score = 0
     bearish_score = 0
@@ -1157,7 +1231,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         self._send_sse_event({"error": f"Moomoo kline failed: {data}", "symbol": symbol})
                         time.sleep(2)
                         continue
-                    bars = _moomoo_kline_bars(data)
+                    indicator_settings = _indicator_settings({"indicatorSettings": state.get("indicator_settings") or {}})
+                    bars = _moomoo_kline_bars(data, indicator_settings)
                     if bars:
                         bar = bars[-1]
                         if bar.get("time_key") != last_time_key:
@@ -1172,6 +1247,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                     bars,
                                     str(state.get("strategy") or "bb_mid_cross_1m"),
                                     str(state.get("ktype") or "1m"),
+                                    indicator_settings,
                                 ),
                             }
                         )
@@ -1208,7 +1284,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 ktype = str(payload.get("ktype") or "1m")
                 start = str(payload.get("start") or "")
                 end = str(payload.get("end") or "")
-                bars, source = _load_bars(symbol, ktype, start, end)
+                indicator_settings = _indicator_settings(payload)
+                bars, source = _load_bars(symbol, ktype, start, end, indicator_settings)
                 days = sorted({bar["date"] for bar in bars if bar.get("date")})
                 self._send_json(
                     {
@@ -1220,6 +1297,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "days": days,
                         "bars": bars,
                         "defaultShares": _default_shares_for_bars(bars),
+                        "indicatorSettings": indicator_settings,
                         "source": "trade_data",
                         "cache": {"file": str(source), "symbol": f"US.{symbol}", "ktype": ktype, "rows": len(bars)},
                     }
@@ -1240,6 +1318,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             extended_time = bool(payload.get("extended_time", True))
             strategy = str(payload.get("strategy") or "bb_mid_cross_1m")
             ktype = str(payload.get("ktype") or _strategy_timeframe(strategy, "1m"))
+            indicator_settings = _indicator_settings(payload)
             quote_ctx = None
             try:
                 quote_ctx, futu = _moomoo_quote_context()
@@ -1248,8 +1327,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self._send_json({"ok": False, "message": f"Moomoo subscribe failed: {msg}"}, 502)
                     return
                 with LIVE_LOCK:
-                    LIVE_STATE.update({"active": True, "symbol": symbol, "extended_time": extended_time, "strategy": strategy, "ktype": ktype})
-                self._send_json({"ok": True, "symbol": symbol, "strategy": strategy, "ktype": ktype, "message": "Live Moomoo stream started."})
+                    LIVE_STATE.update({"active": True, "symbol": symbol, "extended_time": extended_time, "strategy": strategy, "ktype": ktype, "indicator_settings": indicator_settings})
+                self._send_json({"ok": True, "symbol": symbol, "strategy": strategy, "ktype": ktype, "indicatorSettings": indicator_settings, "message": "Live Moomoo stream started."})
             except Exception as exc:
                 self._send_json({"ok": False, "message": str(exc)}, 500)
             finally:

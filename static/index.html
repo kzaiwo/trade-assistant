@@ -454,6 +454,18 @@
       font-size: 12px;
       font-weight: 650;
     }
+    .settings-grid label.indicator-setting {
+      justify-content: space-between;
+    }
+    .settings-grid label.indicator-setting input {
+      width: 74px;
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font: inherit;
+      text-align: right;
+      background: #fff;
+    }
     .build-stamp {
       color: var(--muted);
       font-size: 11px;
@@ -1172,6 +1184,20 @@
               <label><input data-overlay-setting="showTrades" type="checkbox"> Trades</label>
             </div>
           </div>
+          <div class="settings-group">
+            <h3>Indicators</h3>
+            <div class="settings-grid">
+              <label class="indicator-setting">BB period <input data-indicator-setting="bb_period" type="number" min="2" step="1"></label>
+              <label class="indicator-setting">BB std dev <input data-indicator-setting="bb_std_dev" type="number" min="0.1" step="0.1"></label>
+              <label class="indicator-setting">Stoch length <input data-indicator-setting="stoch_period" type="number" min="2" step="1"></label>
+              <label class="indicator-setting">RSI len <input data-indicator-setting="stoch_rsi_period" type="number" min="2" step="1"></label>
+              <label class="indicator-setting">Stoch K <input data-indicator-setting="stoch_k_period" type="number" min="1" step="1"></label>
+              <label class="indicator-setting">Stoch D <input data-indicator-setting="stoch_d_period" type="number" min="1" step="1"></label>
+              <label class="indicator-setting">MACD fast <input data-indicator-setting="macd_fast" type="number" min="1" step="1"></label>
+              <label class="indicator-setting">MACD slow <input data-indicator-setting="macd_slow" type="number" min="2" step="1"></label>
+              <label class="indicator-setting">MACD signal <input data-indicator-setting="macd_signal" type="number" min="1" step="1"></label>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1494,6 +1520,8 @@
     let latestLiveData = null;
     let liveZoomStart = 0;
     let liveZoomEnd = 1;
+    let liveZoomWidth = null;
+    let liveNeedsInitialLatestZoom = true;
     let liveMeasurePoints = [];
     let liveLastHover = null;
     let liveDragState = null;
@@ -1510,6 +1538,7 @@
     const recentStocksKey = 'trading_dashboard_recent_stocks';
     const lastMarketKey = 'trading_dashboard_last_market';
     const liveDisplayKey = 'trading_dashboard_live_display_v1';
+    const indicatorSettingsKey = 'trading_dashboard_indicator_settings_v1';
     const liveDisplayOptions = [
       ['currentPrice', 'Current price'],
       ['strategySignal', 'Strategy signal'],
@@ -1529,6 +1558,18 @@
     ];
     const defaultLiveDisplay = Object.fromEntries(liveDisplayOptions.map(([key]) => [key, true]));
     let liveDisplay = { ...defaultLiveDisplay, ...safeJson(localStorage.getItem(liveDisplayKey), {}) };
+    const defaultIndicatorSettings = {
+      bb_period: 15,
+      bb_std_dev: 2,
+      stoch_rsi_period: 5,
+      stoch_period: 5,
+      stoch_k_period: 3,
+      stoch_d_period: 3,
+      macd_fast: 8,
+      macd_slow: 21,
+      macd_signal: 5
+    };
+    let indicatorSettings = { ...defaultIndicatorSettings, ...safeJson(localStorage.getItem(indicatorSettingsKey), {}) };
 
     const fmtMoney = v => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const fmtTime = t => t.slice(11, 16);
@@ -1774,7 +1815,8 @@
         start: fetchStart.value, end: fetchEnd.value,
         extended: true,
         shares: shareSize.value, strategy: currentStrategyId, day: currentDay,
-        zoomStart, zoomEnd, sessionFilter,
+        zoomStart, zoomEnd, liveZoomWidth, sessionFilter,
+        indicatorSettings,
         overlays: { bands: showBands.checked, vwap: showVwap.checked, macd: showMacd.checked, stoch: showStoch.checked, trades: showTrades.checked }
       };
     }
@@ -1803,8 +1845,12 @@
         if (saved.zoomStart != null && saved.zoomEnd != null && Number(saved.zoomStart) >= Number(saved.zoomEnd)) {
           delete saved.zoomStart; delete saved.zoomEnd;
         }
+        if (saved.liveZoomWidth != null && (Number(saved.liveZoomWidth) < 0.04 || Number(saved.liveZoomWidth) > 1)) delete saved.liveZoomWidth;
         if (saved.sessionFilter && !['all','pre','main','post','night'].includes(saved.sessionFilter)) delete saved.sessionFilter;
         if (saved.mode && !['live', 'backtest'].includes(saved.mode)) delete saved.mode;
+        if (saved.indicatorSettings && typeof saved.indicatorSettings === 'object') {
+          saved.indicatorSettings = normalizedIndicatorSettings(saved.indicatorSettings);
+        }
         return saved;
       } catch { return {}; }
     }
@@ -1850,7 +1896,7 @@
       sessionFilter = value;
       document.querySelectorAll('[data-session]').forEach(button => button.classList.toggle('active', button.dataset.session === value));
       if (options.resetZoom !== false) {
-        if (appMode === 'live') { liveZoomStart = 0; liveZoomEnd = 1; }
+        if (appMode === 'live') { liveZoomEnd = 1; liveZoomStart = Math.max(0, 1 - (liveZoomWidth || 1)); }
         else { zoomStart = 0; zoomEnd = 1; }
       }
       if (appMode === 'live') renderLiveInteractiveChart();
@@ -1881,6 +1927,45 @@
     }
     function saveLiveDisplaySettings() {
       localStorage.setItem(liveDisplayKey, JSON.stringify(liveDisplay));
+    }
+    function normalizedIndicatorSettings(raw = indicatorSettings) {
+      const intKeys = ['bb_period', 'stoch_rsi_period', 'stoch_period', 'stoch_k_period', 'stoch_d_period', 'macd_fast', 'macd_slow', 'macd_signal'];
+      const next = { ...defaultIndicatorSettings };
+      Object.keys(next).forEach(key => {
+        const value = Number(raw?.[key]);
+        next[key] = Number.isFinite(value) && value > 0 ? value : defaultIndicatorSettings[key];
+        if (intKeys.includes(key)) next[key] = Math.max(1, Math.round(next[key]));
+      });
+      next.bb_period = Math.max(2, next.bb_period);
+      next.stoch_rsi_period = Math.max(2, next.stoch_rsi_period);
+      next.stoch_period = Math.max(2, next.stoch_period);
+      next.bb_std_dev = Math.max(0.1, Number(next.bb_std_dev.toFixed(2)));
+      return next;
+    }
+    function indicatorSettingsPayload() {
+      indicatorSettings = normalizedIndicatorSettings(indicatorSettings);
+      return { ...indicatorSettings };
+    }
+    function saveIndicatorSettings() {
+      indicatorSettings = indicatorSettingsPayload();
+      localStorage.setItem(indicatorSettingsKey, JSON.stringify(indicatorSettings));
+    }
+    function syncIndicatorSettingsInputs() {
+      indicatorSettings = indicatorSettingsPayload();
+      document.querySelectorAll('[data-indicator-setting]').forEach(input => {
+        const value = indicatorSettings[input.dataset.indicatorSetting];
+        input.value = value ?? '';
+      });
+    }
+    function scheduleIndicatorSettingsRefresh() {
+      saveIndicatorSettings();
+      saveDashboardState();
+      if (appMode === 'live') {
+        liveStreamDesiredKey = '';
+        startLiveStream();
+      } else {
+        scheduleBacktestFetch(250);
+      }
     }
     function syncOverlaySettings() {
       document.querySelectorAll('[data-overlay-setting]').forEach(input => {
@@ -1921,8 +2006,8 @@
       } else {
         liveSignalHistory = [];
         liveStrategySignal = {};
-        liveZoomStart = 0;
         liveZoomEnd = 1;
+        liveZoomStart = Math.max(0, 1 - (liveZoomWidth || 1));
         startLiveStream();
       }
     }
@@ -1997,6 +2082,10 @@
       if (restored.start) fetchStart.value = restored.start;
       if (restored.end) fetchEnd.value = restored.end;
       if (restored.shares) shareSize.value = restored.shares;
+      if (restored.indicatorSettings) {
+        indicatorSettings = normalizedIndicatorSettings(restored.indicatorSettings);
+        saveIndicatorSettings();
+      }
       document.getElementById('extendedHours').checked = true;
       if (restored.overlays) {
         showBands.checked = restored.overlays.bands !== false;
@@ -2008,6 +2097,11 @@
       if (restored.zoomStart != null && restored.zoomEnd != null) {
         zoomStart = Number(restored.zoomStart);
         zoomEnd = Number(restored.zoomEnd);
+      }
+      if (restored.liveZoomWidth != null) {
+        liveZoomWidth = Math.min(1, Math.max(0.04, Number(restored.liveZoomWidth)));
+        liveZoomEnd = 1;
+        liveZoomStart = Math.max(0, 1 - liveZoomWidth);
       }
       currentStrategyId = DATA.defaultStrategy || DATA.strategies[0].id;
       strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
@@ -2049,7 +2143,7 @@
       stopLiveTrend.addEventListener('click', stopLiveStream);
       liveZoomIn.addEventListener('click', () => liveZoomBy(0.5));
       liveZoomOut.addEventListener('click', () => liveZoomBy(2));
-      liveResetZoom.addEventListener('click', () => { liveZoomStart = 0; liveZoomEnd = 1; renderLiveInteractiveChart(); });
+      liveResetZoom.addEventListener('click', () => { liveZoomWidth = 1; liveZoomStart = 0; liveZoomEnd = 1; renderLiveInteractiveChart(); saveDashboardState(); });
       document.getElementById('liveGoOldest').addEventListener('click', () => liveJumpToEdge('oldest'));
       document.getElementById('liveGoNewest').addEventListener('click', () => liveJumpToEdge('newest'));
       liveCandleChart.addEventListener('wheel', event => {
@@ -2093,6 +2187,7 @@
       });
       document.getElementById('settingsToggle').addEventListener('click', () => {
         renderLiveDisplaySettings();
+        syncIndicatorSettingsInputs();
         settingsModal.classList.add('open');
       });
       settingsClose.addEventListener('click', () => settingsModal.classList.remove('open'));
@@ -2108,7 +2203,15 @@
           render();
         });
       });
+      document.querySelectorAll('[data-indicator-setting]').forEach(input => {
+        input.addEventListener('change', () => {
+          indicatorSettings[input.dataset.indicatorSetting] = Number(input.value);
+          syncIndicatorSettingsInputs();
+          scheduleIndicatorSettingsRefresh();
+        });
+      });
       renderLiveDisplaySettings();
+      syncIndicatorSettingsInputs();
       if (liveCandlesDetails) liveCandlesDetails.hidden = liveDisplay.candlesTable === false;
       document.getElementById('zoomIn').addEventListener('click', () => zoomBy(0.5));
       document.getElementById('zoomOut').addEventListener('click', () => zoomBy(2));
@@ -2164,8 +2267,8 @@
         if (appMode === 'live') {
           liveSignalHistory = [];
           liveStrategySignal = {};
-          liveZoomStart = 0;
           liveZoomEnd = 1;
+          liveZoomStart = Math.max(0, 1 - (liveZoomWidth || 1));
           startLiveStream();
         }
         else scheduleBacktestFetch();
@@ -2225,7 +2328,8 @@
         start: fetchStart.value,
         end: fetchEnd.value,
         shares: shares()
-        ,extended_time: true
+        ,extended_time: true,
+        indicatorSettings: indicatorSettingsPayload()
       };
       fetchData.disabled = true;
       fetchData.textContent = 'Fetching...';
@@ -2280,7 +2384,8 @@
         start,
         end,
         session: sessionFilter,
-        shares: shares()
+        shares: shares(),
+        indicatorSettings: indicatorSettingsPayload()
       };
     }
 
@@ -2313,7 +2418,7 @@
         && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_no_choppy_exit_'));
       if (hasTimedStrategies && hasFullStrategySet) return;
       try {
-        const payload = await fetchStrategyBatch({ bars: [], symbol: fetchSymbol.value, ktype: timeframe, shares: shares(), session: sessionFilter }, '', '');
+        const payload = await fetchStrategyBatch({ bars: [], symbol: fetchSymbol.value, ktype: timeframe, shares: shares(), session: sessionFilter, indicatorSettings: indicatorSettingsPayload() }, '', '');
         if (!payload?.strategies?.length) return;
         const previous = currentStrategyId;
         DATA.strategies = payload.strategies;
@@ -2406,7 +2511,7 @@
       const symbol = fetchSymbol.value || 'INTC';
       const timeframe = fetchTimeframe.value || '1m';
       const strategyId = currentLiveStrategyId();
-      const streamKey = `${symbol}|${timeframe}|${strategyId}`;
+      const streamKey = `${symbol}|${timeframe}|${strategyId}|${JSON.stringify(indicatorSettingsPayload())}`;
       if (liveStreamStarting && liveStreamDesiredKey === streamKey) return;
       if (liveStream && liveStreamDesiredKey === streamKey) return;
       liveStreamStarting = true;
@@ -2421,13 +2526,14 @@
       }
       liveMeasurePoints = [];
       liveLastHover = null;
+      liveNeedsInitialLatestZoom = true;
       liveTrend.disabled = true;
       liveStreamDot.className = 'stream-dot on';
       liveTrendMeta.textContent = `Connecting ${symbol} ${timeframe} stream...`;
       fetch('/api/realtime/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, extended_time: true, strategy: strategyId, ktype: timeframe })
+        body: JSON.stringify({ symbol, extended_time: true, strategy: strategyId, ktype: timeframe, indicatorSettings: indicatorSettingsPayload() })
       }).then(response => response.json()).then(result => {
         if (runId !== liveStreamRunId || appMode !== 'live') return;
         if (!result.ok) throw new Error(result.message || 'Could not start stream.');
@@ -2537,6 +2643,10 @@
           };
           latestLiveData = normalized;
           liveStrategySignal = normalized.strategySignal;
+          if (liveNeedsInitialLatestZoom) {
+            setLiveInitialLatestZoom();
+            liveNeedsInitialLatestZoom = false;
+          }
           if (normalized.signalEvents.length) {
             const visibleTimes = new Set(liveBars.map(b => b.time_key));
             liveSignalHistory = normalized.signalEvents
@@ -3310,31 +3420,26 @@
     function compactXScale(count, plotW, left, zoomWidth = 1) {
       if (count <= 1) {
         const center = left + plotW / 2;
-        return { drawW: 28, slotCount: 1, compact: true, x: () => center };
+        return { left, right: left + plotW, drawW: plotW, slotCount: 1, compact: false, x: () => center };
       }
-      const compact = count <= 56 && zoomWidth <= 0.42;
-      const maxGap = count <= 32 ? 18 : 16;
-      const drawW = compact ? Math.min(plotW, (count - 1) * maxGap) : plotW;
-      const startX = left + (compact ? Math.max(0, (plotW - drawW) / 2) : 0);
       const xMax = Math.max(1, count - 1);
       return {
-        drawW,
+        left,
+        right: left + plotW,
+        drawW: plotW,
         slotCount: count,
-        compact,
-        x: i => startX + i / xMax * drawW
+        compact: false,
+        x: i => left + i / xMax * plotW
       };
     }
 
     function liveZoomBy(factor) {
-      const center = (liveZoomStart + liveZoomEnd) / 2;
       const width = Math.min(1, Math.max(0.04, (liveZoomEnd - liveZoomStart) * factor));
-      liveZoomStart = Math.max(0, center - width / 2);
-      liveZoomEnd = Math.min(1, center + width / 2);
-      if (liveZoomEnd - liveZoomStart < width) {
-        if (liveZoomStart === 0) liveZoomEnd = Math.min(1, width);
-        if (liveZoomEnd === 1) liveZoomStart = Math.max(0, 1 - width);
-      }
+      liveZoomWidth = width;
+      liveZoomEnd = 1;
+      liveZoomStart = Math.max(0, 1 - width);
       renderLiveInteractiveChart();
+      saveDashboardState();
     }
 
     function liveJumpToEdge(edge) {
@@ -3346,7 +3451,18 @@
         liveZoomEnd = 1;
         liveZoomStart = Math.max(0, 1 - width);
       }
+      liveZoomWidth = liveZoomEnd - liveZoomStart;
       renderLiveInteractiveChart();
+      saveDashboardState();
+    }
+
+    function setLiveInitialLatestZoom(count = 120) {
+      let source = liveBars;
+      if (sessionFilter !== 'all') source = source.filter(bar => sessionMatches(bar, sessionFilter));
+      const defaultWidth = source.length <= count ? 1 : Math.min(1, Math.max(0.08, count / source.length));
+      const width = Math.min(1, Math.max(0.04, liveZoomWidth ?? defaultWidth));
+      liveZoomEnd = 1;
+      liveZoomStart = Math.max(0, 1 - width);
     }
 
     function renderLiveInteractiveChart() {
@@ -3391,7 +3507,7 @@
         window.__codexLiveSvgTarget = null;
       };
       withLiveSvg(() => {
-        rect(margin.left, priceTop, plotW, priceBottom - priceTop, 'panel-bg');
+        rect(liveScale.left, priceTop, liveScale.drawW, priceBottom - priceTop, 'panel-bg');
         drawGrid(x, y, bars, pMin - pad, pMax + pad, priceTop, priceBottom, 'Live Price', W, margin);
         addPath(pathFor(bars.map((b, i) => [i, b.bb_upper]), x, y), 'bb-upper');
         addPath(pathFor(bars.map((b, i) => [i, b.bb_lower]), x, y), 'bb-lower');
@@ -3403,7 +3519,7 @@
         drawLiveSignalMarkers(bars, x, y, priceTop, priceBottom);
         drawLiveLastPrice(bars, x, y, W, margin);
         drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, liveSlotCount, liveDrawW);
-        drawStochRsi(bars, x, stochTop, stochBottom, W, margin);
+        drawStochRsi(bars, x, stochTop, stochBottom, W, margin, liveSlotCount, liveDrawW);
       });
       drawLiveHoverLayer(bars, x, y, priceTop, stochBottom, W, margin);
       renderLiveCandlesTable();
@@ -4041,7 +4157,7 @@
       const x = chartScale.x;
       const y = v => priceBottom - (v - (pMin - pad)) / ((pMax + pad) - (pMin - pad)) * (priceBottom - priceTop);
 
-      rect(margin.left, priceTop, W - margin.left - margin.right, priceBottom - priceTop, 'panel-bg');
+      rect(chartScale.left, priceTop, chartScale.drawW, priceBottom - priceTop, 'panel-bg');
       drawGrid(x, y, bars, pMin - pad, pMax + pad, priceTop, priceBottom, 'Price', W, margin);
 
       if (showTrades.checked) drawTradeBackgrounds(bars, trades, x, priceTop, priceBottom);
@@ -4067,7 +4183,7 @@
       drawMeasurement(bars, x, y, priceTop, priceBottom);
       if (showTrades.checked) drawTrades(bars, trades, x, y, priceTop, priceBottom);
       if (showMacd.checked) drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, chartScale.slotCount, chartScale.drawW);
-      if (showStoch.checked) drawStochRsi(bars, x, stochTop, stochBottom, W, margin);
+      if (showStoch.checked) drawStochRsi(bars, x, stochTop, stochBottom, W, margin, chartScale.slotCount, chartScale.drawW);
       drawHoverLayer(bars, trades, x, y, priceTop, hoverBottom, W, margin);
     }
 
@@ -4102,8 +4218,9 @@
     }
 
     function drawCandles(bars, x, y, plotW, slotCount = bars.length) {
-      const maxW = slotCount <= 32 ? 16 : slotCount <= 80 ? 13 : 10;
-      const candleW = Math.max(3, Math.min(maxW, (plotW / Math.max(1, slotCount)) * 1.14));
+      const maxW = slotCount <= 32 ? 38 : slotCount <= 80 ? 29 : 20;
+      const gap = slotCount > 1 ? plotW / Math.max(1, slotCount - 1) : plotW;
+      const candleW = Math.max(5.5, Math.min(maxW, gap * 0.86));
       bars.forEach((b, i) => {
         const up = b.close > b.open;
         const down = b.close < b.open;
@@ -4476,7 +4593,10 @@
     }
 
     function drawMacd(bars, x, top, bottom, W, margin, plotW, slotCount = bars.length, drawW = plotW) {
-      rect(margin.left, top, plotW, bottom - top, 'panel-bg');
+      const laneLeft = slotCount > 1 ? Math.min(x(0), x(slotCount - 1)) : margin.left;
+      const laneRight = slotCount > 1 ? Math.max(x(0), x(slotCount - 1)) : margin.left + drawW;
+      const laneW = Math.max(1, laneRight - laneLeft);
+      rect(laneLeft, top, laneW, bottom - top, 'panel-bg');
       const vals = bars.flatMap(b => [b.macd_dif, b.macd_dea, b.macd_hist]).filter(v => v !== null && v !== undefined && Number.isFinite(Number(v))).map(Number);
       if (!vals.length) {
         text(70, top + 16, 'MACD loading', 'axis-label');
@@ -4484,7 +4604,7 @@
       }
       const min = Math.min(...vals), max = Math.max(...vals), pad = (max - min) * 0.15 || 0.1;
       const y2 = v => bottom - (v - (min - pad)) / ((max + pad) - (min - pad)) * (bottom - top);
-      line(margin.left - 6, y2(0), W - margin.right, y2(0), 'grid');
+      line(laneLeft, y2(0), laneRight, y2(0), 'grid');
       const barW = Math.max(1, Math.min(8, (drawW / Math.max(1, slotCount)) * 0.65));
       bars.forEach((b, i) => {
         const hist = Number.isFinite(Number(b.macd_hist)) ? Number(b.macd_hist)
@@ -4507,12 +4627,15 @@
       text(14, y2(min).toFixed(0), min.toFixed(2), 'axis-label');
     }
 
-    function drawStochRsi(bars, x, top, bottom, W, margin) {
+    function drawStochRsi(bars, x, top, bottom, W, margin, slotCount = bars.length, drawW = W - margin.left - margin.right) {
       const plotW = W - margin.left - margin.right;
-      rect(margin.left, top, plotW, bottom - top, 'panel-bg');
+      const laneLeft = slotCount > 1 ? Math.min(x(0), x(slotCount - 1)) : margin.left;
+      const laneRight = slotCount > 1 ? Math.max(x(0), x(slotCount - 1)) : margin.left + drawW;
+      const laneW = Math.max(1, laneRight - laneLeft);
+      rect(laneLeft, top, laneW, bottom - top, 'panel-bg');
       const y2 = v => bottom - v / 100 * (bottom - top);
-      line(margin.left - 6, y2(80), W - margin.right, y2(80), 'grid');
-      line(margin.left - 6, y2(20), W - margin.right, y2(20), 'grid');
+      line(laneLeft, y2(80), laneRight, y2(80), 'grid');
+      line(laneLeft, y2(20), laneRight, y2(20), 'grid');
       addPath(pathFor(bars.map((b, i) => [i, Number(b.stoch_rsi_k)]), x, y2), 'stoch-k-line');
       addPath(pathFor(bars.map((b, i) => [i, Number(b.stoch_rsi_d)]), x, y2), 'stoch-d-line');
       const last = bars[bars.length - 1] || {};
