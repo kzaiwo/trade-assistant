@@ -229,6 +229,65 @@
     .summary-section[open] .summary-state::after { content: "Collapse"; }
     .summary-section:not([open]) .summary-state::after { content: "Expand"; }
     .summary-body { padding: 13px; }
+    .backtest-overview {
+      display: grid;
+      grid-template-columns: minmax(220px, 1.45fr) repeat(5, minmax(112px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .backtest-overview-card {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
+      padding: 10px 12px;
+      box-shadow: 0 8px 22px rgba(28, 31, 36, 0.05);
+    }
+    .backtest-overview-card.primary {
+      border-color: rgba(31, 122, 184, 0.22);
+      background: linear-gradient(180deg, #ffffff 0%, #f3f9ff 100%);
+    }
+    .backtest-overview-card.bullish {
+      border-color: rgba(var(--color-bullish-rgb), 0.28);
+      background: rgba(var(--color-bullish-rgb), 0.07);
+    }
+    .backtest-overview-card.bearish {
+      border-color: rgba(var(--color-bearish-rgb), 0.30);
+      background: rgba(var(--color-bearish-rgb), 0.07);
+    }
+    .backtest-overview-card.warning {
+      border-color: rgba(var(--color-warning-rgb), 0.34);
+      background: rgba(var(--color-warning-rgb), 0.08);
+    }
+    .backtest-overview-card span {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .backtest-overview-card strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink);
+      font-size: 22px;
+      line-height: 1.08;
+    }
+    .backtest-overview-card.primary strong { font-size: 18px; }
+    .backtest-overview-card small {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
     .strategy-summary tbody tr.active { background: #eef7ff; }
     .strategy-summary tbody tr { cursor: pointer; }
     .strategy-summary th[data-sort] {
@@ -769,6 +828,9 @@
       padding: 8px 10px;
       min-height: 54px;
     }
+    .stat.profit-card { border-color: rgba(var(--color-bullish-rgb), 0.25); background: rgba(var(--color-bullish-rgb), 0.055); }
+    .stat.loss-card { border-color: rgba(var(--color-bearish-rgb), 0.28); background: rgba(var(--color-bearish-rgb), 0.055); }
+    .stat.warning-card { border-color: rgba(var(--color-warning-rgb), 0.30); background: rgba(var(--color-warning-rgb), 0.065); }
     .stat.indicator-status {
       grid-column: span 3;
     }
@@ -825,6 +887,9 @@
       border-radius: 8px;
       background: white;
       overflow: hidden;
+    }
+    body.mode-backtest .chart-shell {
+      box-shadow: 0 14px 34px rgba(28, 31, 36, 0.08);
     }
     .chart-head {
       display: flex;
@@ -1052,6 +1117,36 @@
     tbody tr:hover, tbody tr.active { background: #eef7ff; }
     .table-wrap { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
     .trade-section .table-wrap { max-height: 420px; }
+    body.mode-backtest section h2 {
+      color: var(--ink);
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+    body.mode-backtest .table-wrap {
+      border-color: rgba(130, 146, 166, 0.34);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    }
+    body.mode-backtest th {
+      background: #f7f9fb;
+      color: var(--color-neutral);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    body.mode-backtest td {
+      vertical-align: top;
+    }
+    body.mode-backtest td:nth-child(n+4),
+    body.mode-backtest th:nth-child(n+4),
+    .strategy-summary td:nth-child(n+2),
+    .strategy-summary th:nth-child(n+2) {
+      text-align: right;
+    }
+    .strategy-summary tbody tr.active {
+      background: rgba(31, 122, 184, 0.10);
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+    .strategy-summary tbody tr:hover { background: #f6fbff; }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -1137,6 +1232,8 @@
       .header-chip { min-height: 48px; }
       .header-chip strong { max-width: none; font-size: 14px; }
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .backtest-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .backtest-overview-card.primary { grid-column: 1 / -1; }
       .rule-flow { grid-template-columns: 1fr; }
       .calendar-grid { gap: 3px; }
       .calendar-day { min-height: 48px; padding: 4px; }
@@ -1169,6 +1266,12 @@
       .live-section { padding: 8px; }
       .live-card { min-height: 0; }
       .live-signals-card { grid-column: auto; }
+      .backtest-overview,
+      .stats,
+      aside {
+        grid-template-columns: 1fr;
+      }
+      .backtest-overview-card.primary { grid-column: auto; }
     }
   </style>
 </head>
@@ -1414,6 +1517,7 @@
       </div>
     </div>
 
+    <div class="backtest-overview backtest-mode" id="backtestOverview"></div>
     <div class="stats backtest-mode" id="stats"></div>
 
     <div class="layout backtest-mode">
@@ -4534,6 +4638,7 @@
         renderStrategyNotes();
         renderRules();
         renderStats();
+        renderBacktestOverview();
         renderCalendar();
         renderDailyRows();
         renderSavedNotes();
@@ -4550,6 +4655,7 @@
       renderStrategyNotes();
       renderRules();
       renderStats();
+      renderBacktestOverview();
       renderCalendar();
       renderDailyRows();
       renderSavedNotes();
@@ -5350,8 +5456,35 @@
       `).join('');
     }
 
-    function renderStats() {
+    function renderBacktestOverview() {
+      const target = document.getElementById('backtestOverview');
+      if (!target) return;
       const sh = shares();
+      const strategy = currentStrategy();
+      const month = summarizeTrades(currentTrades());
+      const day = summarizeTrades(dayTrades());
+      const symbol = (DATA.symbol || fetchSymbol.value || '').replace(/^US\./, '');
+      const timeframe = DATA.bar_interval || fetchTimeframe.value || '1m';
+      const dayTotal = day.pnl * sh;
+      const monthTotal = month.pnl * sh;
+      const winTone = month.winRate >= 50 ? 'bullish' : 'bearish';
+      const card = (label, value, detail = '', tone = '') => `
+        <div class="backtest-overview-card ${esc(tone)}">
+          <span>${esc(label)}</span>
+          <strong>${value}</strong>
+          ${detail ? `<small>${detail}</small>` : ''}
+        </div>`;
+      target.innerHTML = [
+        card('Selected Strategy', esc(strategy.label || strategy.id || 'Strategy'), `${esc(symbol)} | ${esc(timeframe)} | ${sh.toLocaleString()} shares`, 'primary'),
+        card('Day P/L', `<span class="${dayTotal >= 0 ? 'profit' : 'loss'}">${fmtMoney(dayTotal)}</span>`, `${fmtMoney(day.pnl)}/share | ${esc(currentDay || 'n/a')}`, dayTotal >= 0 ? 'bullish' : 'bearish'),
+        card('Month P/L', `<span class="${monthTotal >= 0 ? 'profit' : 'loss'}">${fmtMoney(monthTotal)}</span>`, `${fmtMoney(month.pnl)}/share`, monthTotal >= 0 ? 'bullish' : 'bearish'),
+        card('Win Rate', `${month.winRate.toFixed(1)}%`, `${day.winRate.toFixed(1)}% today`, winTone),
+        card('Total Trades', month.trades.toLocaleString(), `${day.trades.toLocaleString()} today`, ''),
+        card('Profit Factor', Number.isFinite(month.profitFactor) ? month.profitFactor.toFixed(2) : 'inf', `Max DD ${fmtMoney(month.maxDd)}/sh`, Number(month.profitFactor || 0) >= 1 ? 'bullish' : 'warning')
+      ].join('');
+    }
+
+    function renderStats() {
       const month = summarizeTrades(currentTrades());
       const day = summarizeTrades(dayTrades());
       const monthPf = Number.isFinite(month.profitFactor) ? month.profitFactor.toFixed(2) : 'inf';
@@ -5359,22 +5492,14 @@
       const statusBar = allBarsForCurrentDay().slice(-1)[0] || DATA.bars.slice(-1)[0];
       const bbMove = bbMidMoveMeta(statusBar, allBarsForCurrentDay());
       const metricCards = [
-        ['Month P/L', `${fmtMoney(month.pnl)}/share`, month.pnl >= 0 ? 'profit' : 'loss'],
-        [`Month ${sh} Shares`, fmtMoney(month.pnl * sh), month.pnl >= 0 ? 'profit' : 'loss'],
-        ['Month Success', `${month.winRate.toFixed(1)}%`, ''],
-        ['Month Trades', month.trades, ''],
-        ['Month PF', monthPf, ''],
+        ['Month PF', monthPf, Number(month.profitFactor || 0) >= 1 ? 'profit' : 'loss'],
         ['Month Max DD', `${fmtMoney(month.maxDd)}/share`, 'loss'],
-        ['Day P/L', `${fmtMoney(day.pnl)}/share`, day.pnl >= 0 ? 'profit' : 'loss'],
-        [`Day ${sh} Shares`, fmtMoney(day.pnl * sh), day.pnl >= 0 ? 'profit' : 'loss'],
-        ['Day Success', `${day.winRate.toFixed(1)}%`, ''],
-        ['Day Trades', day.trades, ''],
-        ['Day PF', dayPf, ''],
+        ['Day PF', dayPf, Number(day.profitFactor || 0) >= 1 ? 'profit' : 'loss'],
         ['Day Max DD', `${fmtMoney(day.maxDd)}/share`, 'loss'],
         ['BB Mid Move', fmtPct(bbMove.move), bbMove.big ? 'profit' : ''],
         ['Avg BB Mid Move', fmtPct(bbMove.avg), ''],
         ['Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x` : 'n/a', bbMove.big ? 'profit' : ''],
-      ].map(([k, v, cls]) => `<div class="stat"><span>${k}</span><strong class="${cls}">${v}</strong></div>`).join('');
+      ].map(([k, v, cls]) => `<div class="stat ${cls === 'profit' ? 'profit-card' : cls === 'loss' ? 'loss-card' : ''}"><span>${k}</span><strong class="${cls}">${v}</strong></div>`).join('');
       document.getElementById('stats').innerHTML = metricCards + `
         <div class="stat indicator-status">
           <span>Indicator Status · ${esc(currentStrategy().label)}</span>
