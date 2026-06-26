@@ -884,6 +884,18 @@
     }
     .trade-bg-win { fill: rgba(20, 122, 72, 0.10); }
     .trade-bg-loss { fill: rgba(183, 55, 52, 0.11); }
+    .rally-watch-bg-up { fill: rgba(20, 122, 72, 0.075); stroke: rgba(20, 122, 72, 0.18); stroke-width: 1; }
+    .rally-watch-bg-down { fill: rgba(183, 55, 52, 0.08); stroke: rgba(183, 55, 52, 0.2); stroke-width: 1; }
+    .rally-watch-marker-up { fill: rgba(20, 122, 72, 0.75); }
+    .rally-watch-marker-down { fill: rgba(183, 55, 52, 0.75); }
+    .rally-watch-card.up { border-color: rgba(20, 122, 72, 0.28); background: rgba(20, 122, 72, 0.045); }
+    .rally-watch-card.down { border-color: rgba(183, 55, 52, 0.3); background: rgba(183, 55, 52, 0.05); }
+    .rally-watch-card.neutral { border-color: var(--line); }
+    .rally-watch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    .rally-watch-score { padding: 8px; border-radius: 7px; background: rgba(255,255,255,.58); border: 1px solid rgba(39,48,60,.1); }
+    .rally-watch-score strong { display: block; font-size: 15px; }
+    .rally-watch-score small { display: block; color: var(--muted); margin-top: 2px; }
+    .rally-watch-list { margin: 7px 0 0; padding-left: 15px; color: var(--muted); font-size: 11px; }
     .trade-entry, .trade-exit, .trade-annotation { cursor: pointer; }
     .trade-leader { stroke-width: 0.8; opacity: 0.32; }
     .trade-anchor { stroke: white; stroke-width: 1.2; opacity: 0.82; }
@@ -1238,6 +1250,7 @@
           <button id="liveZoomIn" class="icon-btn" title="Zoom in">+</button>
           <button id="liveResetZoom" class="mini-reset" title="Reset live zoom">Reset</button>
           <button id="liveGoNewest" class="mini-reset" title="Go to newest visible session candle">Newest</button>
+          <label class="toggle" title="Show Rally Watch overlay"><input id="showLiveRally" type="checkbox" checked> Rally</label>
           <div class="live-stream-state"><span id="liveStreamDot" class="stream-dot"></span><span id="liveTrendMeta">Stream stopped</span></div>
         </div>
       </div>
@@ -1473,6 +1486,7 @@
     const liveZoomIn = document.getElementById('liveZoomIn');
     const liveZoomOut = document.getElementById('liveZoomOut');
     const liveResetZoom = document.getElementById('liveResetZoom');
+    const showLiveRally = document.getElementById('showLiveRally');
     const liveMacdChart = document.getElementById('liveMacdChart');
     const liveStochChart = document.getElementById('liveStochChart');
     const settingsModal = document.getElementById('settingsModal');
@@ -1542,6 +1556,7 @@
     const liveDisplayOptions = [
       ['currentPrice', 'Current price'],
       ['strategySignal', 'Strategy signal'],
+      ['rallyWatch', 'Rally Watch'],
       ['bias', 'Bias'],
       ['movement', 'Possible movement'],
       ['levels', 'Levels'],
@@ -1817,7 +1832,7 @@
         shares: shareSize.value, strategy: currentStrategyId, day: currentDay,
         zoomStart, zoomEnd, liveZoomWidth, sessionFilter,
         indicatorSettings,
-        overlays: { bands: showBands.checked, vwap: showVwap.checked, macd: showMacd.checked, stoch: showStoch.checked, trades: showTrades.checked }
+        overlays: { bands: showBands.checked, vwap: showVwap.checked, macd: showMacd.checked, stoch: showStoch.checked, trades: showTrades.checked, liveRally: showLiveRally.checked }
       };
     }
     function saveLastMarket() {
@@ -2093,6 +2108,7 @@
         showMacd.checked = restored.overlays.macd !== false;
         showStoch.checked = restored.overlays.stoch !== false;
         showTrades.checked = restored.overlays.trades !== false;
+        showLiveRally.checked = restored.overlays.liveRally !== false;
       }
       if (restored.zoomStart != null && restored.zoomEnd != null) {
         zoomStart = Number(restored.zoomStart);
@@ -2144,6 +2160,7 @@
       liveZoomIn.addEventListener('click', () => liveZoomBy(0.5));
       liveZoomOut.addEventListener('click', () => liveZoomBy(2));
       liveResetZoom.addEventListener('click', () => { liveZoomWidth = 1; liveZoomStart = 0; liveZoomEnd = 1; renderLiveInteractiveChart(); saveDashboardState(); });
+      showLiveRally.addEventListener('change', () => { renderLiveInteractiveChart(); saveDashboardState(); });
       document.getElementById('liveGoOldest').addEventListener('click', () => liveJumpToEdge('oldest'));
       document.getElementById('liveGoNewest').addEventListener('click', () => liveJumpToEdge('newest'));
       liveCandleChart.addEventListener('wheel', event => {
@@ -2619,6 +2636,7 @@
                 ...liveAlerts.map(alert => ({ text: alert.label, tone: 'alert', tip: alert.detail }))
               ],
               alerts: liveAlerts,
+              rallyWatch: local.rally_watch || null,
               reasoning: local.reasoning || [],
               entryReason: local.entry_reason,
               exitReason: local.exit_reason,
@@ -2715,6 +2733,8 @@
       const momentum = a.momentum || {};
       const probs = a.probabilities || {};
       const strategySignal = data.strategySignal || {};
+      const rallyWatch = a.rallyWatch || {};
+      const rallyBest = bestRallyWatch(rallyWatch);
       const bbMove = bbMidMoveMeta((data.bars || []).slice(-1)[0], data.bars || []);
       const tone = a.bias === 'bullish' ? 'profit' : a.bias === 'bearish' ? 'loss' : '';
       const card = (key, html) => liveDisplay[key] === false ? '' : html;
@@ -2733,6 +2753,7 @@
           <strong><span class="strategy-signal ${esc(strategySignal.tone || 'neutral')}">${esc(strategySignal.action || 'WAIT')}</span></strong>
           <p>${esc(a.tradeState || 'COMPLETE')} | Grade ${esc(a.tradeGrade || 'F')} | R/R ${fmtLevel(risk.riskReward)}</p>
         </div>`)}
+        ${card('rallyWatch', rallyWatchCardHtml(rallyWatch, rallyBest))}
         ${card('bias', `
         <div class="live-card">
           <h3>Bias</h3>
@@ -2857,6 +2878,40 @@
       const tone = typeof signal === 'string' ? signalTone(text) : (signal.tone || signalTone(signal.text));
       const tip = typeof signal === 'string' ? signalDefinition(text) : (signal.tip || signalDefinition(text));
       return `<span class="live-signal ${esc(tone)}" title="${esc(tip)}">${esc(text)}</span>`;
+    }
+
+    function rallyStateLabel(direction, score = {}) {
+      const word = direction === 'up' ? 'Up' : 'Down';
+      if (score.state === 'strong') return `Rally ${word} Strong`;
+      if (score.state === 'likely') return `Rally ${word} Likely`;
+      if (score.state === 'building') return `Building ${word}`;
+      return 'No Setup';
+    }
+
+    function bestRallyWatch(rallyWatch = {}) {
+      const up = rallyWatch.up || { score: 0, state: 'no_setup', reasons: [], warnings: [] };
+      const down = rallyWatch.down || { score: 0, state: 'no_setup', reasons: [], warnings: [] };
+      if (Number(up.score || 0) >= Number(down.score || 0)) return { direction: 'up', score: up };
+      return { direction: 'down', score: down };
+    }
+
+    function rallyWatchCardHtml(rallyWatch = {}, best = bestRallyWatch(rallyWatch)) {
+      const up = rallyWatch.up || { score: 0, state: 'no_setup', reasons: [], warnings: [] };
+      const down = rallyWatch.down || { score: 0, state: 'no_setup', reasons: [], warnings: [] };
+      const tone = best.score?.state && best.score.state !== 'no_setup' ? best.direction : 'neutral';
+      const reasons = (best.score?.reasons || []).slice(0, 3);
+      const warnings = (best.score?.warnings || []).slice(0, 2);
+      return `
+        <div class="live-card rally-watch-card ${esc(tone)}">
+          <h3>Rally Watch</h3>
+          <strong class="${tone === 'up' ? 'profit' : tone === 'down' ? 'loss' : ''}">${esc(rallyStateLabel(best.direction, best.score))}</strong>
+          <div class="rally-watch-grid">
+            <div class="rally-watch-score"><strong class="profit">${Number(up.score || 0)}%</strong><small>${esc(rallyStateLabel('up', up))}</small></div>
+            <div class="rally-watch-score"><strong class="loss">${Number(down.score || 0)}%</strong><small>${esc(rallyStateLabel('down', down))}</small></div>
+          </div>
+          ${reasons.length ? `<ul class="rally-watch-list">${reasons.map(reason => `<li>${esc(reason)}</li>`).join('')}</ul>` : '<p>No rally setup yet.</p>'}
+          ${warnings.length ? `<p style="margin-top:6px;">Warning: ${esc(warnings.join(' / '))}</p>` : ''}
+        </div>`;
     }
 
     function signalTone(text = '') {
@@ -3516,6 +3571,7 @@
         addPath(pathFor(bars.map((b, i) => [i, b.bb_mid]), x, y), 'bb-mid');
         drawBbMidTurnMarkers(bars, x, priceBottom);
         drawLiveMeasurement(bars, x, y, priceTop, priceBottom);
+        drawLiveRallyWatchOverlay(bars, x, priceTop, priceBottom);
         drawLiveSignalMarkers(bars, x, y, priceTop, priceBottom);
         drawLiveLastPrice(bars, x, y, W, margin);
         drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, liveSlotCount, liveDrawW);
@@ -3625,6 +3681,29 @@
         g.addEventListener('mouseleave', () => tooltip.style.display = 'none');
         target.appendChild(g);
       });
+    }
+
+    function drawLiveRallyWatchOverlay(bars, x, top, bottom) {
+      if (!showLiveRally?.checked || !latestLiveData?.analysis?.rallyWatch) return;
+      const watch = latestLiveData.analysis.rallyWatch;
+      const best = bestRallyWatch(watch);
+      if (!['likely', 'strong'].includes(best.score?.state)) return;
+      const localIndex = new Map(bars.map((b, i) => [b.time_key, i]));
+      const index = localIndex.get(watch.timestamp) ?? bars.length - 1;
+      if (index === undefined || index < 0) return;
+      const start = Math.max(0, index - 4);
+      const x1 = Math.min(x(start), x(index));
+      const width = Math.max(4, Math.abs(x(index) - x(start)));
+      const target = liveCandleChart;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      const up = best.direction === 'up';
+      const label = up ? 'Rally Up' : 'Rally Down';
+      g.innerHTML = `
+        <rect x="${x1}" y="${top}" width="${width}" height="${bottom - top}" class="${up ? 'rally-watch-bg-up' : 'rally-watch-bg-down'}" rx="3"/>
+        <circle cx="${x(index)}" cy="${top + 18}" r="4" class="${up ? 'rally-watch-marker-up' : 'rally-watch-marker-down'}"/>
+        <text x="${x(index) + 8}" y="${top + 22}" font-size="10" font-weight="800" fill="${up ? '#147a48' : '#b73734'}">${label} ${Number(best.score.score || 0)}%</text>
+      `;
+      target.appendChild(g);
     }
 
     function drawLiveLastPrice(bars, x, y, W, margin) {

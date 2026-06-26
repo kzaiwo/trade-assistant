@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from config import BACKTEST_NOTIONAL
+from signals.rally_watch import evaluate_rally_watch
 
 
 ROOT = Path(__file__).resolve().parent
@@ -665,6 +666,12 @@ def _ema(values: list[float | None], span: int) -> list[float | None]:
     return out
 
 
+def _bars_dataframe(bars: list[dict]):
+    import pandas as pd
+
+    return pd.DataFrame(bars)
+
+
 def _compute_derived_indicators(bars: list[dict], indicator_settings: dict | None = None) -> list[dict]:
     if not bars:
         return bars
@@ -848,6 +855,13 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     stream_minutes = _bars_interval_minutes(bars)
     signal_minutes = _timeframe_minutes(timeframe)
     signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe), indicator_settings)
+    higher_tf = "3m" if signal_minutes <= 1 else "5m"
+    higher_bars = _compute_derived_indicators(_timeframe_bars(bars, higher_tf), indicator_settings)
+    rally_watch = evaluate_rally_watch(
+        _bars_dataframe(signal_bars),
+        timeframe,
+        _bars_dataframe(higher_bars) if higher_bars else None,
+    ).to_dict()
     base_name = strategy_id.rsplit("_", 1)[0]
     live_label = base_name.replace("_", " ").title()
     live_trades = _fast_trades(strategy_id, live_label, signal_bars, _plain_symbol(symbol), 1)
@@ -897,6 +911,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
         "signal_time": bar.get("time_key"),
         "signal_price": close,
         "signal_events": signal_events,
+        "rally_watch": rally_watch,
         "confidence": round(confidence * 100, 1) if confidence else 0,
         "bullish_score": bullish_score,
         "bearish_score": bearish_score,
