@@ -173,6 +173,14 @@
       white-space: nowrap;
     }
     .subvalue { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .strategy-note-list {
+      margin: 6px 0 0 15px;
+      padding: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .strategy-note-list li { margin: 2px 0; }
     .summary-state {
       color: var(--muted);
       font-size: 12px;
@@ -685,17 +693,62 @@
     .candle-flat { fill: #6b7280; stroke: #4b5563; stroke-width: 1; }
     .candle-wick-up { stroke: #147a48; stroke-width: 1; }
     .candle-wick-down { stroke: #b73734; stroke-width: 1; }
-    .bb-mid { fill: none; stroke: var(--blue); stroke-width: 1.8; }
-    .bb-upper, .bb-lower { fill: none; stroke: #69a9d8; stroke-width: 1; stroke-dasharray: 4 4; }
-    .bb-band { fill: rgba(31, 122, 184, 0.13); stroke: none; }
-    .vwap-line { fill: none; stroke: #0f766e; stroke-width: 1.5; stroke-dasharray: 6 3; }
+    .bb-mid { fill: none; stroke: #c98216; stroke-width: 1.9; }
+    .bb-upper { fill: none; stroke: #8b5cf6; stroke-width: 1.55; }
+    .bb-lower { fill: none; stroke: #7fc8ff; stroke-width: 1.55; }
+    .bb-band { display: none; }
+    .vwap-line { fill: none; stroke: #8f78b8; stroke-width: 1.45; stroke-dasharray: 5 4; }
     .macd-line { fill: none; stroke: var(--green); stroke-width: 1.7; }
     .dea-line { fill: none; stroke: var(--red); stroke-width: 1.5; }
     .macd-hist-pos { fill: rgba(20, 122, 72, 0.52); }
     .macd-hist-neg { fill: rgba(183, 55, 52, 0.52); }
     .stoch-k-line { fill: none; stroke: var(--green); stroke-width: 1.4; }
     .stoch-d-line { fill: none; stroke: var(--red); stroke-width: 1.2; }
-    .trade-line { stroke-width: 1; opacity: 0.22; }
+    .trade-line { stroke-width: 1.35; opacity: 0.5; }
+    .trade-separator {
+      stroke: rgba(39, 48, 60, 0.42);
+      stroke-width: 1.35;
+      stroke-dasharray: 4 5;
+    }
+    .trade-separator-cap {
+      fill: rgba(39, 48, 60, 0.64);
+    }
+    .trade-inline-label-bg {
+      fill: rgba(241, 244, 250, 0.78);
+      stroke: rgba(39, 48, 60, 0.28);
+      stroke-width: 1.2;
+    }
+    .trade-summary-label.long .trade-inline-label-bg {
+      fill: rgba(20, 122, 72, 0.07);
+      stroke: rgba(20, 122, 72, 0.34);
+      stroke-width: 1.15;
+    }
+    .trade-summary-label.short .trade-inline-label-bg {
+      fill: rgba(183, 55, 52, 0.07);
+      stroke: rgba(183, 55, 52, 0.34);
+      stroke-width: 1.15;
+    }
+    .trade-summary-divider {
+      stroke: rgba(39, 48, 60, 0.22);
+      stroke-width: 1;
+    }
+    .trade-summary-side {
+      opacity: 0.38;
+    }
+    .trade-summary-side-dot {
+      stroke: rgba(255, 255, 255, 0.92);
+      stroke-width: 1.1;
+    }
+    .trade-inline-label-text {
+      fill: #27303c;
+      font-size: 10px;
+      font-weight: 500;
+      pointer-events: none;
+    }
+    .trade-summary-label .trade-inline-label-text {
+      font-size: 11px;
+      dominant-baseline: middle;
+    }
     .trade-bg-win { fill: rgba(20, 122, 72, 0.10); }
     .trade-bg-loss { fill: rgba(183, 55, 52, 0.11); }
     .trade-entry, .trade-exit, .trade-annotation { cursor: pointer; }
@@ -1297,6 +1350,21 @@
     const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const shares = () => Math.max(1, Number(shareSize.value || DATA.defaultShares || 800));
     const currentStrategy = () => DATA.strategies.find(s => s.id === currentStrategyId) || DATA.strategies[0];
+    function strategyBaseId(strategyId) {
+      return String(strategyId || '').replace(/_(?:\d+m|1d|1w)$/i, '');
+    }
+    function preferredStrategyId(previousId, strategies, timeframe) {
+      const ids = new Set((strategies || []).map(s => s.id));
+      if (ids.has(previousId)) return previousId;
+      const base = strategyBaseId(previousId);
+      const timed = base ? `${base}_${timeframe}` : '';
+      if (ids.has(timed)) return timed;
+      const midCross = `bb_mid_cross_${timeframe}`;
+      if (!base || base === 'analyzing' || base === 'empty') {
+        if (ids.has(midCross)) return midCross;
+      }
+      return strategies?.[0]?.id || 'empty';
+    }
     const currentTrades = () => currentStrategy().trades;
     const savedNotesKey = 'intc_bb_macd_saved_trade_notes';
     const savedOpenAiKeyKey = 'codex_dashboard_openai_api_key';
@@ -1836,9 +1904,10 @@
       render();
     }
 
-    function resetForPayload(payload) {
+    function resetForPayload(payload, options = {}) {
+      const priorStrategyId = options.preferredStrategyId || currentStrategyId;
       DATA = normalizeBacktestPayload(payload);
-      currentStrategyId = DATA.defaultStrategy || DATA.strategies[0].id;
+      currentStrategyId = preferredStrategyId(priorStrategyId, DATA.strategies, fetchTimeframe.value) || DATA.defaultStrategy || DATA.strategies[0].id;
       strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
       strategySelect.value = currentStrategyId;
       daySelect.innerHTML = DATA.days.map(d => `<option value="${d}">${d}</option>`).join('');
@@ -1876,6 +1945,7 @@
 
     async function fetchDashboardData() {
       const requestId = ++fetchRequestId;
+      const requestedStrategyId = currentStrategyId;
       const payload = {
         symbol: fetchSymbol.value,
         ktype: fetchTimeframe.value,
@@ -1905,11 +1975,11 @@
         const sourceLabel = data.source === 'trade_data' ? '_trade_data' : 'Moomoo OpenD';
         const cacheFile = data.cache?.file || sourceLabel;
         data.cache = { symbol: data.symbol, ktype: data.bar_interval, rows: data.bars.length, source: data.source, file: cacheFile };
-        resetForPayload(data);
+        resetForPayload(data, { preferredStrategyId: requestedStrategyId });
         addRecentStock(payload);
         selectionText.textContent = `Loaded ${data.cache.symbol} ${data.cache.ktype}: ${data.bars.length} bars from ${sourceLabel}. Analyzing latest day...`;
         fetchData.textContent = 'Analyzing...';
-        await analyzeStrategiesInBatches(data, payload, sourceLabel, requestId);
+        await analyzeStrategiesInBatches(data, payload, sourceLabel, requestId, requestedStrategyId);
         selectionText.textContent = `Loaded ${data.cache.symbol} ${data.cache.ktype}: ${data.bars.length} bars across ${data.days.length} sessions from ${sourceLabel}.`;
       } catch (err) {
         if (requestId !== fetchRequestId) return;
@@ -2001,7 +2071,7 @@
       });
     }
 
-    async function analyzeStrategiesInBatches(data, basePayload, sourceLabel, requestId) {
+    async function analyzeStrategiesInBatches(data, basePayload, sourceLabel, requestId, requestedStrategyId = currentStrategyId) {
       const days = [...(data.days || [])].sort();
       if (!days.length) return;
       const latestDay = days[days.length - 1];
@@ -2009,7 +2079,7 @@
       if (requestId !== fetchRequestId) return;
       data.strategies = latest.strategies;
       data.defaultStrategy = latest.defaultStrategy;
-      resetForPayload(data);
+      resetForPayload(data, { preferredStrategyId: requestedStrategyId });
       currentDay = latestDay;
       daySelect.value = currentDay;
       selectionText.textContent = `Latest day analyzed (${latestDay}). Filling remaining days in batches...`;
@@ -2025,7 +2095,7 @@
         data.strategies = mergeStrategyBatches(data.strategies, next.strategies);
         data.defaultStrategy = data.strategies[0]?.id || data.defaultStrategy;
         const keepDay = currentDay;
-        resetForPayload(data);
+        resetForPayload(data, { preferredStrategyId: requestedStrategyId });
         if (DATA.days.includes(keepDay)) {
           currentDay = keepDay;
           daySelect.value = currentDay;
@@ -3053,7 +3123,7 @@
       const xx = x(bars.length - 1);
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       g.innerHTML = `
-        <line x1="${margin.left}" x2="${W - margin.right}" y1="${yy}" y2="${yy}" stroke="#1f7ab8" stroke-dasharray="4 4"/>
+        <line x1="${margin.left}" x2="${W - margin.right}" y1="${yy}" y2="${yy}" stroke="#1f7ab8" stroke-dasharray="4 4" opacity="0.24"/>
         <circle cx="${xx}" cy="${yy}" r="4" fill="#1f7ab8"/>
         <rect x="${W - margin.right + 6}" y="${yy - 10}" width="62" height="20" rx="5" fill="#1f7ab8"/>
         <text x="${W - margin.right + 37}" y="${yy + 4}" text-anchor="middle" font-size="12" font-weight="800" fill="white">${fmtLevel(last.close)}</text>
@@ -3264,17 +3334,90 @@
       render();
     }
 
+    function chartTimeframe() {
+      return fetchTimeframe.value || DATA.bar_interval || '1m';
+    }
+
+    function timeframeMinutes(timeframe) {
+      const match = String(timeframe || '1m').match(/^(\d+)m$/);
+      return match ? Math.max(1, Number(match[1])) : 1;
+    }
+
+    function inferredBarMinutes(bars) {
+      for (let i = 1; i < bars.length; i++) {
+        const prev = new Date(String(bars[i - 1].time_key || '').replace(' ', 'T'));
+        const curr = new Date(String(bars[i].time_key || '').replace(' ', 'T'));
+        const diff = Math.round((curr - prev) / 60000);
+        if (Number.isFinite(diff) && diff > 0 && diff < 240) return diff;
+      }
+      return timeframeMinutes(DATA.bar_interval || DATA.cache?.ktype || '1m');
+    }
+
+    function addMinutesToTimeKey(timeKey, minutes) {
+      const date = new Date(String(timeKey || '').replace(' ', 'T'));
+      if (Number.isNaN(date.getTime())) return timeKey;
+      date.setMinutes(date.getMinutes() + minutes);
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const hh = String(date.getHours()).padStart(2, '0');
+      const mi = String(date.getMinutes()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd} ${hh}:${mi}:00`;
+    }
+
+    function aggregateChartBucket(bucket, bucketStartKey, minutes) {
+      const first = bucket[0];
+      const last = bucket[bucket.length - 1];
+      const timeKey = addMinutesToTimeKey(`${bucketStartKey}:00`, minutes);
+      return {
+        ...last,
+        time_key: timeKey,
+        date: String(timeKey || last.time_key || '').slice(0, 10),
+        open: Number(first.open),
+        high: Math.max(...bucket.map(b => Number(b.high)).filter(Number.isFinite)),
+        low: Math.min(...bucket.map(b => Number(b.low)).filter(Number.isFinite)),
+        close: Number(last.close),
+        volume: bucket.reduce((sum, b) => sum + Number(b.volume || 0), 0),
+      };
+    }
+
+    function aggregateChartBars(bars, timeframe) {
+      const minutes = timeframeMinutes(timeframe);
+      if (minutes <= 1 || bars.length <= 1) return bars;
+      const out = [];
+      let bucket = [];
+      let currentKey = '';
+      bars.forEach(bar => {
+        const time = String(bar.time_key || '');
+        const minute = Number(time.slice(14, 16));
+        const key = `${time.slice(0, 14)}${String(minute - (minute % minutes)).padStart(2, '0')}`;
+        if (currentKey && key !== currentKey && bucket.length) {
+          out.push(aggregateChartBucket(bucket, currentKey, minutes));
+          bucket = [];
+        }
+        currentKey = key;
+        bucket.push(bar);
+      });
+      if (bucket.length) out.push(aggregateChartBucket(bucket, currentKey, minutes));
+      return out;
+    }
+
+    function allBarsForCurrentDay() {
+      const raw = DATA.bars.filter(b => b.date === currentDay);
+      const sessionBars = sessionFilter === 'all' ? raw : raw.filter(bar => sessionMatches(bar, sessionFilter));
+      const selectedTf = chartTimeframe();
+      const selectedMinutes = timeframeMinutes(selectedTf);
+      const loadedMinutes = inferredBarMinutes(sessionBars);
+      if (selectedMinutes <= loadedMinutes) return sessionBars;
+      return aggregateChartBars(sessionBars, selectedTf);
+    }
+
     function filteredBars() {
-      const all = DATA.bars.filter(b => b.date === currentDay);
+      const all = allBarsForCurrentDay();
       if (all.length <= 2) return all;
       const start = Math.max(0, Math.floor(zoomStart * (all.length - 1)));
       const end = Math.min(all.length, Math.ceil(zoomEnd * (all.length - 1)) + 1);
       return all.slice(start, Math.max(start + 2, end));
-    }
-    function allBarsForCurrentDay() {
-      const bars = DATA.bars.filter(b => b.date === currentDay);
-      if (sessionFilter === 'all') return bars;
-      return bars.filter(bar => sessionMatches(bar, sessionFilter));
     }
     function sessionMatches(bar, session) {
       if (session === 'all') return true;
@@ -3282,6 +3425,8 @@
       const range = ranges[session];
       if (!range || !bar?.time_key) return true;
       const time = bar.time_key.slice(11,16);
+      const periodStart = String(bar.period_start || bar.time_key).slice(11,16);
+      if (bar.period_start) return range[0] <= range[1] ? periodStart >= range[0] && time <= range[1] : periodStart >= range[0] || time <= range[1];
       return range[0] <= range[1] ? time >= range[0] && time <= range[1] : time >= range[0] || time <= range[1];
     }
     function filteredTrades() {
@@ -3560,7 +3705,7 @@
       drawHistoricalLastPrice(bars, y, W, margin);
 
       drawMeasurement(bars, x, y, priceTop, priceBottom);
-      if (showTrades.checked) drawTrades(bars, trades, x, y);
+      if (showTrades.checked) drawTrades(bars, trades, x, y, priceTop, priceBottom);
       if (showMacd.checked) drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW);
       if (showStoch.checked) drawStochRsi(bars, x, stochTop, stochBottom, W, margin);
       drawHoverLayer(bars, trades, x, y, priceTop, hoverBottom, W, margin);
@@ -3646,6 +3791,7 @@
       const yy = y(last.close);
       const color = last.close >= last.open ? '#147a48' : '#b73734';
       line(margin.left, yy, W - margin.right - 50, yy, '', color);
+      svg.lastChild.setAttribute('opacity', '0.24');
       rect(W - margin.right - 50, yy - 10, 48, 20, '');
       const badge = svg.lastChild;
       badge.setAttribute('fill', color);
@@ -3685,23 +3831,187 @@
       });
     }
 
-    function drawTrades(bars, trades, x, y) {
+    function drawTrades(bars, trades, x, y, top, bottom) {
       const localIndex = new Map(bars.map((b, i) => [b.time_key, i]));
+      const markerCounts = new Map();
+      const markerShift = key => {
+        const count = markerCounts.get(key) || 0;
+        markerCounts.set(key, count + 1);
+        return count === 0 ? 0 : (count % 2 ? 12 : -12) * Math.ceil(count / 2);
+      };
       trades.forEach(t => {
         const ei = localIndex.get(t.entryTime);
         const xi = localIndex.get(t.exitTime);
         if (ei === undefined || xi === undefined) return;
-        const color = t.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+        const color = t.side === 'LONG' ? 'var(--green)' : 'var(--red)';
         const cls = selectedTradeId === t.id ? 'selected' : '';
-        line(x(ei), y(t.entry), x(xi), y(t.exit), 'trade-line', color);
+        drawTradeSeparator(x(ei), top, bottom, `${t.side} entry ${fmtTime(t.entryTime)}`);
+        drawTradeSeparator(x(xi), top, bottom, `${t.side} exit ${fmtTime(t.exitTime)}`);
+        const exitX = x(xi) + markerShift(`${t.exitTime}:${Math.round(y(t.exit))}`);
+        drawTradeSummaryLabel((x(ei) + x(xi)) / 2, top + 52, t, color);
         if (t.side === 'LONG') {
-          tradeAnnotation(x(ei), y(t.entry), t.name, color, t, cls, -24, t.name, t.entryTime, t.entry);
-          tradeAnnotation(x(xi), y(t.exit), 'Close', color, t, cls, 24, 'Close', t.exitTime, t.exit);
+          tradeAnnotation(exitX, y(t.exit), '', color, t, cls, 24, 'Close', t.exitTime, t.exit);
         } else {
-          tradeAnnotation(x(ei), y(t.entry), t.name, color, t, cls, 24, t.name, t.entryTime, t.entry);
-          tradeAnnotation(x(xi), y(t.exit), 'Close', color, t, cls, -24, 'Close', t.exitTime, t.exit);
+          tradeAnnotation(exitX, y(t.exit), '', color, t, cls, -24, 'Close', t.exitTime, t.exit);
         }
       });
+    }
+
+    function drawTradeSeparator(xPos, top, bottom, label) {
+      const lineEl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      lineEl.setAttribute('x1', xPos);
+      lineEl.setAttribute('x2', xPos);
+      lineEl.setAttribute('y1', top);
+      lineEl.setAttribute('y2', bottom);
+      lineEl.setAttribute('class', 'trade-separator');
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = label;
+      lineEl.appendChild(title);
+      svg.appendChild(lineEl);
+      const cap = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      cap.setAttribute('cx', xPos);
+      cap.setAttribute('cy', top + 2);
+      cap.setAttribute('r', 3);
+      cap.setAttribute('class', 'trade-separator-cap');
+      svg.appendChild(cap);
+    }
+
+    function drawTradeInlineLabel(cx, cy, label, color, trade, action, offsetY = 0) {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', 'trade-inline-label');
+      const safeLabel = String(label);
+      const width = Math.max(48, safeLabel.length * 6 + 12);
+      const x0 = cx - width / 2;
+      const y0 = cy + offsetY - 9;
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', x0);
+      bg.setAttribute('y', y0);
+      bg.setAttribute('width', width);
+      bg.setAttribute('height', 18);
+      bg.setAttribute('rx', 4);
+      bg.setAttribute('class', 'trade-inline-label-bg');
+      bg.setAttribute('stroke', color);
+      g.appendChild(bg);
+      const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      textEl.setAttribute('x', cx);
+      textEl.setAttribute('y', y0 + 12);
+      textEl.setAttribute('text-anchor', 'middle');
+      textEl.setAttribute('class', 'trade-inline-label-text');
+      textEl.textContent = safeLabel;
+      g.appendChild(textEl);
+      bindTradeEvents(g, trade, { action, signalTime: action === 'Exit' ? trade.exitTime : trade.entryTime, signalPrice: action === 'Exit' ? trade.exit : trade.entry });
+      svg.appendChild(g);
+    }
+
+    function drawTradeSummaryLabel(cx, cy, trade, color) {
+      const sh = shares();
+      const totalPnl = fmtMoney(trade.pnl * sh);
+      const perSharePnl = ` (${fmtMoney(trade.pnl)}/share)`;
+      const sideLine = trade.side;
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', `trade-summary-label ${trade.side === 'LONG' ? 'long' : 'short'}`);
+      const entryPrice = `$${Number(trade.entry).toFixed(2)}`;
+      const exitPrice = `$${Number(trade.exit).toFixed(2)}`;
+      const entryTime = fmtTime(trade.entryTime);
+      const exitTime = fmtTime(trade.exitTime);
+      const width = Math.max(150, Math.max(entryPrice.length + exitPrice.length, totalPnl.length, perSharePnl.length) * 5.2 + 36);
+      const height = 84;
+      const x0 = cx - width / 2;
+      const y0 = cy - height / 2;
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', x0);
+      bg.setAttribute('y', y0);
+      bg.setAttribute('width', width);
+      bg.setAttribute('height', height);
+      bg.setAttribute('rx', 6);
+      bg.setAttribute('class', 'trade-inline-label-bg');
+      bg.setAttribute('stroke', color);
+      g.appendChild(bg);
+
+      const sideStrip = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      sideStrip.setAttribute('x', x0);
+      sideStrip.setAttribute('y', y0);
+      sideStrip.setAttribute('width', 6);
+      sideStrip.setAttribute('height', height);
+      sideStrip.setAttribute('rx', 3);
+      sideStrip.setAttribute('fill', color);
+      sideStrip.setAttribute('class', 'trade-summary-side');
+      g.appendChild(sideStrip);
+
+      const sideDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      sideDot.setAttribute('cx', x0 + 6);
+      sideDot.setAttribute('cy', y0 + 15);
+      sideDot.setAttribute('r', 4);
+      sideDot.setAttribute('fill', color);
+      sideDot.setAttribute('class', 'trade-summary-side-dot');
+      g.appendChild(sideDot);
+
+      const sideText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      sideText.setAttribute('x', cx);
+      sideText.setAttribute('y', cy - 27);
+      sideText.setAttribute('text-anchor', 'middle');
+      sideText.setAttribute('class', 'trade-inline-label-text');
+      sideText.setAttribute('font-weight', '900');
+      sideText.setAttribute('fill', color);
+      sideText.setAttribute('font-size', '13');
+      sideText.setAttribute('letter-spacing', '0');
+      sideText.setAttribute('style', 'font-weight:900');
+      sideText.textContent = sideLine;
+      g.appendChild(sideText);
+
+      const divider = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      divider.setAttribute('x1', cx);
+      divider.setAttribute('x2', cx);
+      divider.setAttribute('y1', cy - 15);
+      divider.setAttribute('y2', cy + 8);
+      divider.setAttribute('class', 'trade-summary-divider');
+      g.appendChild(divider);
+
+      const leftX = cx - width * 0.24;
+      const rightX = cx + width * 0.24;
+      [
+        [leftX, entryPrice, entryTime],
+        [rightX, exitPrice, exitTime]
+      ].forEach(([xPos, price, time]) => {
+        const priceEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        priceEl.setAttribute('x', xPos);
+        priceEl.setAttribute('y', cy - 6);
+        priceEl.setAttribute('text-anchor', 'middle');
+        priceEl.setAttribute('class', 'trade-inline-label-text');
+        priceEl.setAttribute('font-weight', '800');
+        priceEl.textContent = price;
+        g.appendChild(priceEl);
+
+        const timeEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        timeEl.setAttribute('x', xPos);
+        timeEl.setAttribute('y', cy + 7);
+        timeEl.setAttribute('text-anchor', 'middle');
+        timeEl.setAttribute('class', 'trade-inline-label-text');
+        timeEl.setAttribute('font-size', '9');
+        timeEl.setAttribute('fill', 'rgba(39, 48, 60, 0.70)');
+        timeEl.textContent = time;
+        g.appendChild(timeEl);
+      });
+      const pnlText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      pnlText.setAttribute('x', cx);
+      pnlText.setAttribute('y', cy + 26);
+      pnlText.setAttribute('text-anchor', 'middle');
+      pnlText.setAttribute('class', 'trade-inline-label-text');
+      const total = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      total.setAttribute('font-weight', '900');
+      total.setAttribute('fill', trade.pnl >= 0 ? '#147a48' : '#b73734');
+      total.textContent = totalPnl;
+      const share = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+      share.setAttribute('font-weight', '500');
+      share.setAttribute('fill', '#27303c');
+      share.setAttribute('x', cx);
+      share.setAttribute('dy', '11');
+      share.textContent = perSharePnl.trim();
+      pnlText.appendChild(total);
+      pnlText.appendChild(share);
+      g.appendChild(pnlText);
+      bindTradeEvents(g, trade, { action: `${trade.side} summary`, signalTime: trade.entryTime, signalPrice: trade.entry });
+      svg.appendChild(g);
     }
 
     function drawMacd(bars, x, top, bottom, W, margin, plotW, slotCount = bars.length, drawW = plotW) {
@@ -4040,9 +4350,11 @@
         const st = safeStats(s.stats);
         const pf = Number.isFinite(st.profit_factor) ? st.profit_factor.toFixed(2) : 'inf';
         const tone = st.pnl_per_share >= 0 ? 'profit' : 'loss';
+        const notes = Array.isArray(s.rules?.strategy_notes) ? s.rules.strategy_notes : (Array.isArray(s.strategy_notes) ? s.strategy_notes : []);
+        const notesHtml = notes.length ? `<ul class="strategy-note-list">${notes.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : '';
         const note = esc(s.rules?.note || s.description || '');
         return `<tr data-strategy="${s.id}">
-          <td><strong>${s.label}</strong></td>
+          <td><strong>${s.label}</strong>${notesHtml}</td>
           <td>${note}</td>
           <td>${st.trades}</td>
           <td>${st.win_rate.toFixed(1)}%</td>
@@ -4072,7 +4384,8 @@
       document.getElementById('ruleFlow').innerHTML = ruleFlowHtml(s);
       document.getElementById('entryRuleRows').innerHTML = ruleRows(s.rules.entry);
       document.getElementById('exitRuleRows').innerHTML = ruleRows(s.rules.exit);
-      document.getElementById('rulesNote').textContent = s.rules.note;
+      const notes = Array.isArray(s.rules?.strategy_notes) ? s.rules.strategy_notes : [];
+      document.getElementById('rulesNote').innerHTML = notes.length ? `<ul class="strategy-note-list">${notes.map(item => `<li>${esc(item)}</li>`).join('')}</ul>` : esc(s.rules.note || '');
     }
 
     function patternCard(title, svgMarkup, caption) {
@@ -4550,34 +4863,36 @@
       anchor.setAttribute('class', 'trade-anchor');
       g.appendChild(anchor);
 
-      const leader = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      leader.setAttribute('x1', cx);
-      leader.setAttribute('y1', cy);
-      leader.setAttribute('x2', cx);
-      leader.setAttribute('y2', labelY > cy ? labelY - 9 : labelY + 9);
-      leader.setAttribute('stroke', color);
-      leader.setAttribute('class', 'trade-leader');
-      g.appendChild(leader);
+      if (label) {
+        const leader = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        leader.setAttribute('x1', cx);
+        leader.setAttribute('y1', cy);
+        leader.setAttribute('x2', cx);
+        leader.setAttribute('y2', labelY > cy ? labelY - 9 : labelY + 9);
+        leader.setAttribute('stroke', color);
+        leader.setAttribute('class', 'trade-leader');
+        g.appendChild(leader);
 
-      const width = Math.max(44, label.length * 6 + 11);
-      const rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rectEl.setAttribute('x', cx - width / 2);
-      rectEl.setAttribute('y', labelY - 8);
-      rectEl.setAttribute('width', width);
-      rectEl.setAttribute('height', 16);
-      rectEl.setAttribute('rx', 4);
-      rectEl.setAttribute('class', 'trade-label-bg');
-      rectEl.setAttribute('stroke', color);
-      g.appendChild(rectEl);
+        const width = Math.max(44, label.length * 6 + 11);
+        const rectEl = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rectEl.setAttribute('x', cx - width / 2);
+        rectEl.setAttribute('y', labelY - 8);
+        rectEl.setAttribute('width', width);
+        rectEl.setAttribute('height', 16);
+        rectEl.setAttribute('rx', 4);
+        rectEl.setAttribute('class', 'trade-label-bg');
+        rectEl.setAttribute('stroke', color);
+        g.appendChild(rectEl);
 
-      const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      textEl.setAttribute('x', cx);
-      textEl.setAttribute('y', labelY + 0.25);
-      textEl.setAttribute('text-anchor', 'middle');
-      textEl.setAttribute('fill', color);
-      textEl.setAttribute('class', 'trade-label-text');
-      textEl.textContent = label;
-      g.appendChild(textEl);
+        const textEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        textEl.setAttribute('x', cx);
+        textEl.setAttribute('y', labelY + 0.25);
+        textEl.setAttribute('text-anchor', 'middle');
+        textEl.setAttribute('fill', color);
+        textEl.setAttribute('class', 'trade-label-text');
+        textEl.textContent = label;
+        g.appendChild(textEl);
+      }
 
       bindTradeEvents(g, trade, { action, signalTime, signalPrice });
       svg.appendChild(g);

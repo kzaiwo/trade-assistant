@@ -8,9 +8,11 @@ from data.file_loader import FileLoader
 from journal.logger import TradeJournal
 from runner.backtest import BacktestRunner
 from signals.bb_squeeze import BBSqueeze
+from signals.bb_mid_cross import BBMidCross
 from signals.macd_cross import MACDCross
 from signals.stoch_cross import StochCross
 from signals.vwap_bounce import VWAPBounce
+from strategies.bb_mid_cross import BBMidCrossStrategy
 from strategies.mean_reversion import MeanReversion, SignalStrategy
 
 
@@ -24,6 +26,7 @@ def build_strategies(names: list[str] | None = None, timeframes: list[str] | Non
         available[f"stoch_cross_{timeframe}"] = SignalStrategy(StochCross(timeframe=timeframe))
         available[f"vwap_bounce_{timeframe}"] = SignalStrategy(VWAPBounce(timeframe=timeframe))
         available[f"macd_cross_{timeframe}"] = SignalStrategy(MACDCross(timeframe=timeframe))
+        available[f"bb_mid_cross_{timeframe}"] = BBMidCrossStrategy(timeframe=timeframe)
         available[f"mean_reversion_{timeframe}"] = MeanReversion(timeframe=timeframe)
     if names:
         return [available[name] for name in names]
@@ -35,6 +38,7 @@ def build_strategies(names: list[str] | None = None, timeframes: list[str] | Non
                 available[f"stoch_cross_{timeframe}"],
                 available[f"vwap_bounce_{timeframe}"],
                 available[f"macd_cross_{timeframe}"],
+                available[f"bb_mid_cross_{timeframe}"],
                 available[f"mean_reversion_{timeframe}"],
             ]
         )
@@ -47,6 +51,13 @@ def append_json_summary(run_summary: dict):
     runs = []
     if path.exists():
         runs = json.loads(path.read_text())
+    runs = [
+        run for run in runs
+        if not (
+            run.get("strategy") == run_summary.get("strategy")
+            and run.get("date_range") == run_summary.get("date_range")
+        )
+    ]
     runs.append(run_summary)
     path.write_text(json.dumps(runs, indent=2))
 

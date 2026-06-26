@@ -14,6 +14,13 @@ class MACDCross(Signal):
     category = "momentum"
     required_indicators = [MACD]
     default_params = {"cooldown_bars": 5}
+    strategy_notes = [
+        "Entry rules: buy when MACD crosses above signal with positive histogram; sell when MACD crosses below signal with negative histogram.",
+        "Exit rules: close or reverse when the opposite MACD crossover appears after cooldown.",
+        "Filters: requires histogram to confirm the crossover direction and uses cooldown.",
+        "Best conditions: works best when momentum is cleanly shifting after consolidation.",
+        "Weaknesses: lags fast reversals and can whipsaw in low-volatility chop.",
+    ]
 
     def evaluate(self, df: pd.DataFrame) -> pd.Series:
         dif = df["macd_dif"]

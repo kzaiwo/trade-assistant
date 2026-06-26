@@ -14,6 +14,13 @@ class StochCross(Signal):
     category = "momentum"
     required_indicators = [StochRSI]
     default_params = {"threshold": 20, "cooldown_bars": 5}
+    strategy_notes = [
+        "Entry rules: buy when StochRSI K crosses above D in the oversold zone; sell when K crosses below D in the overbought zone.",
+        "Exit rules: close or reverse when an opposite StochRSI zone crossover appears after cooldown.",
+        "Filters: ignores crosses outside the oversold or overbought zones and uses cooldown.",
+        "Best conditions: works best after sharp intraday extensions that start to mean revert.",
+        "Weaknesses: can fire early in strong trends where overbought or oversold stays pinned.",
+    ]
 
     def evaluate(self, df: pd.DataFrame) -> pd.Series:
         k = df["stoch_rsi_k"]

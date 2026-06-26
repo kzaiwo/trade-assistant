@@ -21,9 +21,12 @@ class FileLoader(DataSource):
         self.start_date = start_date
         self.end_date = end_date
         self.include_extended_hours = include_extended_hours
+        self._cache: dict[str, pd.DataFrame] = {}
 
     def get_bars(self, symbol: str) -> dict[str, pd.DataFrame]:
-        df_1m = self._load_raw(symbol)
+        if symbol not in self._cache:
+            self._cache[symbol] = self._load_raw(symbol)
+        df_1m = self._cache[symbol].copy()
         return {
             "1m": df_1m,
             "5m": self._resample(df_1m, "5min"),
@@ -61,9 +64,14 @@ class FileLoader(DataSource):
         if self.end_date:
             df = df[df["time_key"] < pd.Timestamp(self.end_date) + pd.Timedelta(days=1)]
         if not self.include_extended_hours:
+            open_hour, open_minute = [int(part) for part in MARKET_OPEN_TIME.split(":")]
+            close_hour, close_minute = [int(part) for part in MARKET_CLOSE_TIME.split(":")]
+            market_open = open_hour * 60 + open_minute
+            market_close = close_hour * 60 + close_minute
+            minute_of_day = df["time_key"].dt.hour * 60 + df["time_key"].dt.minute
             df = df[
-                (df["time_key"].dt.strftime("%H:%M") >= MARKET_OPEN_TIME)
-                & (df["time_key"].dt.strftime("%H:%M") <= MARKET_CLOSE_TIME)
+                (minute_of_day >= market_open)
+                & (minute_of_day <= market_close)
             ]
 
         return df.reset_index(drop=True)

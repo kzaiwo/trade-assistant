@@ -14,6 +14,13 @@ class VWAPBounce(Signal):
     category = "trend"
     required_indicators = [VWAP]
     default_params = {"volume_window": 20, "volume_multiplier": 1.05, "cooldown_bars": 5}
+    strategy_notes = [
+        "Entry rules: buy when price reclaims VWAP from below on confirming volume; sell when price rejects VWAP from above on confirming volume.",
+        "Exit rules: close or reverse when the opposite VWAP reclaim or rejection appears after cooldown.",
+        "Filters: requires current volume above the rolling average volume threshold and uses cooldown.",
+        "Best conditions: works best when VWAP is acting as an intraday control level.",
+        "Weaknesses: can be noisy around VWAP when volume is uneven or price is range-bound.",
+    ]
 
     def evaluate(self, df: pd.DataFrame) -> pd.Series:
         avg_volume = df["volume"].rolling(self.params["volume_window"]).mean()

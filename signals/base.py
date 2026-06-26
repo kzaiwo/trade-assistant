@@ -14,6 +14,7 @@ class Signal(ABC):
     timeframe: str = "1m"
     weight: float = 1.0
     default_params: dict = {}
+    strategy_notes: list[str] = []
 
     def __init__(self, timeframe: str | None = None, weight: float | None = None, **params):
         if timeframe:
@@ -62,4 +63,5 @@ class Signal(ABC):
             "category": self.category,
             "timeframe": self.timeframe,
             "weight": self.weight,
+            "strategy_notes": self.strategy_notes,
         }

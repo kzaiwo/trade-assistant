@@ -49,6 +49,19 @@ class BBMidCross(Signal):
 - Body above bb_mid: `max(0, body_top - bb_mid) / (body_top - body_bottom)`
 - Body below bb_mid: `max(0, bb_mid - body_bottom) / (body_top - body_bottom)`
 
+**Cold start / positioning entry (when no position is open and no recent cross):**
+
+This handles the case where the strategy starts and price is already on one side of BB mid with no crossover event. Only fires when:
+- No position is currently open
+- No crossover has occurred in the last 10 candles
+- Not choppy (chop filter still applies)
+- Price is clearly on one side of BB mid — close is more than 0.3× bandwidth away from bb_mid
+- BB mid slope confirms the direction (not flat)
+- BUY if close > bb_mid and slope is up
+- SELL if close < bb_mid and slope is down
+- This entry gets **lower confidence** (0.3-0.5 range) than a crossover entry (0.6-0.9 range) since there's no cross event confirming momentum shift
+- Once positioned, normal crossover rules handle exits/reversals
+
 **Confidence scoring:**
 - Base confidence from how far past the midline the close is (relative to bandwidth)
 - Boost if bb_mid_slope strongly confirms direction

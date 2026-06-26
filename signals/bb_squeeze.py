@@ -14,6 +14,13 @@ class BBSqueeze(Signal):
     category = "mean_reversion"
     required_indicators = [BollingerBands]
     default_params = {"band_tolerance": 0.0015, "narrow_lookback": 5, "cooldown_bars": 5}
+    strategy_notes = [
+        "Entry rules: buy near the lower Bollinger Band when bandwidth is narrowing; sell near the upper band when bandwidth is narrowing.",
+        "Exit rules: close or reverse when the same strategy produces an opposite signal after cooldown.",
+        "Filters: requires narrowing bandwidth and uses cooldown to avoid repeated band-touch entries.",
+        "Best conditions: works best in ranging markets that stretch to the bands and revert.",
+        "Weaknesses: can fail badly when a band touch becomes a real breakout.",
+    ]
 
     def evaluate(self, df: pd.DataFrame) -> pd.Series:
         bandwidth = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"]

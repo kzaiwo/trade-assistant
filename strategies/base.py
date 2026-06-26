@@ -32,6 +32,7 @@ class Strategy(ABC):
     valid_contexts: list[str] | None = None
 
     def run(self, bars: dict[str, pd.DataFrame]) -> pd.DataFrame:
+        self._rule_name_cache: dict[int, str] = {}
         working = {timeframe: df.copy() for timeframe, df in bars.items()}
         signals = self._collect_signals(self.rule)
         primary_timeframe = signals[0].timeframe if signals else "1m"
@@ -47,10 +48,11 @@ class Strategy(ABC):
         }
         base = working[primary_timeframe].copy()
         base = self._add_market_context_columns(base)
+        market_contexts = self._market_contexts(base)
         strategy_results: list[StrategyResult] = []
         for idx in base.index:
             result = self._evaluate_node(self.rule, idx, signal_outputs)
-            context = self._market_context(base, idx)
+            context = market_contexts[idx]
             strategy_results.append(
                 StrategyResult(
                     direction=result.direction,
@@ -87,12 +89,13 @@ class Strategy(ABC):
             active = [c for c in children if c.direction != SignalDirection.NEUTRAL]
             if len(active) != len(children):
                 return StrategyResult(SignalDirection.NEUTRAL, 0.0, self._flatten(children), self._rule_name(node), None, False)
-            directions = {c.direction for c in active}
+            directional = [c for c in active if not str(c.triggered_rule).startswith("NOT ")]
+            directions = {c.direction for c in (directional or active)}
             if len(directions) != 1:
                 return StrategyResult(SignalDirection.NEUTRAL, 0.0, self._flatten(children), self._rule_name(node), None, False)
             weights = [max(sum(s.weight for s in c.signal_results), 1e-9) for c in active]
             confidence = sum(c.confidence * w for c, w in zip(active, weights)) / sum(weights)
-            return StrategyResult(active[0].direction, confidence, self._flatten(children), self._rule_name(node), None, False)
+            return StrategyResult((directional or active)[0].direction, confidence, self._flatten(children), self._rule_name(node), None, False)
         if isinstance(node, Or):
             children = [self._evaluate_node(c, idx, signal_outputs) for c in node.conditions]
             active = [c for c in children if c.direction != SignalDirection.NEUTRAL]
@@ -113,15 +116,22 @@ class Strategy(ABC):
         return out
 
     def _rule_name(self, node) -> str:
+        cache = getattr(self, "_rule_name_cache", None)
+        if cache is not None and id(node) in cache:
+            return cache[id(node)]
         if isinstance(node, Signal):
-            return node.name
-        if isinstance(node, And):
-            return " AND ".join(self._rule_name(c) for c in node.conditions)
-        if isinstance(node, Or):
-            return "(" + " OR ".join(self._rule_name(c) for c in node.conditions) + ")"
-        if isinstance(node, Not):
-            return f"NOT {self._rule_name(node.condition)}"
-        return str(node)
+            name = node.name
+        elif isinstance(node, And):
+            name = " AND ".join(self._rule_name(c) for c in node.conditions)
+        elif isinstance(node, Or):
+            name = "(" + " OR ".join(self._rule_name(c) for c in node.conditions) + ")"
+        elif isinstance(node, Not):
+            name = f"NOT {self._rule_name(node.condition)}"
+        else:
+            name = str(node)
+        if cache is not None:
+            cache[id(node)] = name
+        return name
 
     def _market_context(self, df: pd.DataFrame, idx) -> MarketContext:
         change = df["_context_change"].iat[idx]
@@ -131,6 +141,17 @@ class Strategy(ABC):
         trend = "ranging" if abs(change) < 0.005 else ("trending" if abs(change) > 0.015 else "choppy")
         volatility = "low" if vol < 0.0015 else ("high" if vol > 0.006 else "normal")
         return MarketContext(trend, volatility)
+
+    def _market_contexts(self, df: pd.DataFrame) -> list[MarketContext]:
+        contexts: list[MarketContext] = []
+        for change, vol in zip(df["_context_change"].to_numpy(), df["_context_vol"].to_numpy()):
+            if pd.isna(change) or pd.isna(vol):
+                contexts.append(MarketContext("choppy", "normal"))
+                continue
+            trend = "ranging" if abs(change) < 0.005 else ("trending" if abs(change) > 0.015 else "choppy")
+            volatility = "low" if vol < 0.0015 else ("high" if vol > 0.006 else "normal")
+            contexts.append(MarketContext(trend, volatility))
+        return contexts
 
     def _add_market_context_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()

@@ -11,12 +11,20 @@ class SignalStrategy(Strategy):
         self.name = f"{signal.name}_{signal.timeframe}"
         self.display_name = f"{signal.display_name} ({signal.timeframe})"
         self.description = signal.description
+        self.strategy_notes = getattr(signal, "strategy_notes", [])
         self.rule = signal
         self.valid_contexts = None
 
 
 class MeanReversion(Strategy):
     description = "Looks for oversold bounces confirmed by momentum and trend shifts."
+    strategy_notes = [
+        "Entry rules: buy when a lower-band squeeze aligns with StochRSI, VWAP, or MACD confirmation; sell when the upper-band version aligns.",
+        "Exit rules: close or reverse when the composite setup flips direction after cooldown.",
+        "Filters: requires a Bollinger squeeze signal plus at least one same-direction momentum or VWAP confirmation.",
+        "Best conditions: works best in ranging markets where stretched moves snap back with confirmation.",
+        "Weaknesses: can miss simple reversals with no confirmation and can fight strong breakouts.",
+    ]
 
     def __init__(self, timeframe: str = "1m"):
         self.timeframe = timeframe
