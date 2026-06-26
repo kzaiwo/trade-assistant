@@ -1578,10 +1578,10 @@
     const savedOpenAiKeyKey = 'codex_dashboard_openai_api_key';
     const savedAskGptKey = 'codex_dashboard_saved_ask_gpt';
     function emptyBacktestPayload() {
-      const strategyNames = ['bb_squeeze', 'stoch_cross', 'vwap_bounce', 'macd_cross', 'mean_reversion'];
-      const strategies = ['1m', '5m'].flatMap(timeframe => strategyNames.map(name => {
+      const strategyNames = ['bb_squeeze', 'bb_breakout', 'stoch_cross', 'vwap_bounce', 'macd_cross', 'bb_mid_cross', 'bb_mid_2_no_choppy', 'bb_mid_no_choppy_exit', 'bb_mid_no_choppy_exit_early_close', 'mean_reversion'];
+      const strategies = ['1m', '3m', '5m', '15m', '30m', '60m'].flatMap(timeframe => strategyNames.map(name => {
         const id = `${name}_${timeframe}`;
-        const label = `${titleize(name)} (${timeframe})`;
+        const label = titleize(name);
         return {
           id,
           label,
@@ -1607,7 +1607,7 @@
         days: ['No data'],
         bars: [],
         strategies,
-        defaultStrategy: 'bb_squeeze_1m',
+        defaultStrategy: 'bb_mid_cross_1m',
         defaultShares: 1,
         cache: { file: 'Not loaded', symbol: 'US.INTC', ktype: '1m', rows: 0 }
       };
@@ -2305,6 +2305,28 @@
       return strategyData;
     }
 
+    async function ensureStrategyListForTimeframe() {
+      if (window.location.protocol === 'file:') return;
+      const timeframe = fetchTimeframe.value || DATA.bar_interval || '1m';
+      const hasTimedStrategies = (DATA.strategies || []).some(strategy => String(strategy.id || '').endsWith(`_${timeframe}`));
+      const hasFullStrategySet = (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_cross_'))
+        && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_no_choppy_exit_'));
+      if (hasTimedStrategies && hasFullStrategySet) return;
+      try {
+        const payload = await fetchStrategyBatch({ bars: [], symbol: fetchSymbol.value, ktype: timeframe, shares: shares(), session: sessionFilter }, '', '');
+        if (!payload?.strategies?.length) return;
+        const previous = currentStrategyId;
+        DATA.strategies = payload.strategies;
+        DATA.defaultStrategy = preferredStrategyId(previous, DATA.strategies, timeframe) || payload.defaultStrategy || DATA.strategies[0].id;
+        currentStrategyId = DATA.defaultStrategy;
+        strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
+        strategySelect.value = currentStrategyId;
+        updateHeaderStatus();
+      } catch (error) {
+        console.warn('Could not load strategy list for live mode.', error);
+      }
+    }
+
     function recomputeStrategyStats(strategy) {
       const summary = summarizeTrades(strategy.trades || []);
       strategy.stats = {
@@ -2380,6 +2402,7 @@
     }
 
     async function startLiveStream() {
+      await ensureStrategyListForTimeframe();
       const symbol = fetchSymbol.value || 'INTC';
       const timeframe = fetchTimeframe.value || '1m';
       const strategyId = currentLiveStrategyId();
@@ -2495,6 +2518,7 @@
               exitReason: local.exit_reason,
               note: 'Trading-agent-spec deterministic rule engine. VWAP is context only; BB mid slope, structure, MACD, StochRSI confirmation, and risk filters decide the signal.'
             },
+            signalEvents: Array.isArray(local.signal_events) ? local.signal_events : [],
             strategySignal: {
               action: displayAction,
               entryAction: action,
@@ -2513,7 +2537,15 @@
           };
           latestLiveData = normalized;
           liveStrategySignal = normalized.strategySignal;
-          rememberLiveSignal(normalized.strategySignal);
+          if (normalized.signalEvents.length) {
+            const visibleTimes = new Set(liveBars.map(b => b.time_key));
+            liveSignalHistory = normalized.signalEvents
+              .filter(signal => visibleTimes.has(signal.time) && ['BUY', 'SELL'].includes(signal.action))
+              .map(signal => ({ ...signal, markerAction: signal.action, tone: signal.action === 'BUY' ? 'bullish' : 'bearish' }))
+              .slice(-80);
+          } else {
+            rememberLiveSignal(normalized.strategySignal);
+          }
           updateHeaderStatus(normalized);
           renderLiveTrend(normalized);
           renderLiveInteractiveChart();
@@ -5513,6 +5545,7 @@
       const initialPayload = await loadInitialBacktestPayload();
       if (initialPayload) DATA = normalizeBacktestPayload(initialPayload);
       init();
+      if (!initialPayload) ensureStrategyListForTimeframe();
     }
     bootstrapDashboard();
   </script>

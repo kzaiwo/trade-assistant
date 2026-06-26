@@ -774,6 +774,21 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     stream_minutes = _bars_interval_minutes(bars)
     signal_minutes = _timeframe_minutes(timeframe)
     signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe))
+    base_name = strategy_id.rsplit("_", 1)[0]
+    live_label = base_name.replace("_", " ").title()
+    live_trades = _fast_trades(strategy_id, live_label, signal_bars, _plain_symbol(symbol), 1)
+    signal_events = [
+        {
+            "action": "BUY" if trade.get("side") == "LONG" else "SELL",
+            "side": trade.get("side"),
+            "time": trade.get("entryTime"),
+            "price": trade.get("entry"),
+            "strategy": strategy_id,
+            "reason": trade.get("entryReason"),
+        }
+        for trade in live_trades[-80:]
+        if trade.get("entryTime")
+    ]
     bar = signal_bars[-1]
     prev = signal_bars[-2] if len(signal_bars) > 1 else None
     side, confidence, reason = _fast_signal(strategy_id, bar, prev, signal_bars, len(signal_bars) - 1)
@@ -807,6 +822,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
         "strategy_timeframe": timeframe,
         "signal_time": bar.get("time_key"),
         "signal_price": close,
+        "signal_events": signal_events,
         "confidence": round(confidence * 100, 1) if confidence else 0,
         "bullish_score": bullish_score,
         "bearish_score": bearish_score,
