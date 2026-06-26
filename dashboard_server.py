@@ -18,6 +18,7 @@ TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "60m"]
 BARS_CACHE: dict[tuple[str, str, str, str], tuple[list[dict], Path]] = {}
 BB_MID_FLAT_TOLERANCE = 0.001
 BB_MID_FIRST_ENTRY_TIME = "09:45"
+BB_MID_LAST_ENTRY_TIME = "15:10"
 
 
 def _plain_symbol(value: str) -> str:
@@ -251,7 +252,9 @@ def _body_side_ratios(bar: dict) -> tuple[float, float]:
     body = top - bottom
     if body <= 0:
         return 0.0, 0.0
-    return max(0.0, top - mid) / body, max(0.0, mid - bottom) / body
+    above = max(0.0, top - max(mid, bottom)) / body
+    below = max(0.0, min(mid, top) - bottom) / body
+    return min(1.0, above), min(1.0, below)
 
 
 def _is_choppy_around_mid(bars: list[dict], index: int, lookback: int = 8, flip_threshold: int = 3, narrow_bw_pct: float = 0.02) -> bool:
@@ -289,9 +292,9 @@ def _cold_start_mid_signal(bar: dict, prev: dict | None, bars: list[dict], index
     slope_strength = abs(slope) / max(abs(close) * 0.0005, 1e-9)
     conf = max(0.3, min(0.5, 0.35 + min(slope_strength, 0.15)))
     if close > mid and slope > 0:
-        return "LONG", conf, "Trend-side long: close is above BB mid with rising midline"
+        return "LONG", conf, "Initial trend-side long: close is above BB mid with rising midline"
     if close < mid and slope < 0:
-        return "SHORT", conf, "Trend-side short: close is below BB mid with falling midline"
+        return "SHORT", conf, "Initial trend-side short: close is below BB mid with falling midline"
     return None, 0.0, ""
 
 
@@ -324,10 +327,47 @@ def _bb_mid_cross_signal(bar: dict, prev: dict | None, prev_prev: dict | None, b
         return _cold_start_mid_signal(bar, prev, bars, index)
     body = abs((_num(bar.get("close"), 0) or 0) - (_num(bar.get("open"), 0) or 0))
     atr = _num(bar.get("atr14"))
-    if atr is not None and body < atr * 0.1:
-        return None, 0.0, ""
     prev_above, prev_below = _body_side_ratios(prev)
     above, below = _body_side_ratios(bar)
+    crossed_up = prev_close < prev_mid and close > mid
+    crossed_down = prev_close > prev_mid and close < mid
+    flat_limit = close * BB_MID_FLAT_TOLERANCE
+    tight_flat = abs(slope) <= close * (BB_MID_FLAT_TOLERANCE * 0.1)
+    prev_flat = bool(prev_slope is not None and abs(prev_slope) <= flat_limit)
+    prev_falling = bool(prev_slope is not None and prev_slope < -flat_limit)
+    near_mid = abs(close - mid) <= flat_limit
+    down_turn_limit = flat_limit * 0.37
+    if (prev_falling and flat and near_mid) or (prev_flat and prev_slope <= 0 and slope > 0 and above >= 0.8):
+        return "LONG", conf, "BB mid stopped falling with price near or above the midline"
+    if prev_flat and prev_slope >= 0 and slope <= -down_turn_limit and below >= 0.8:
+        return "SHORT", conf, "BB mid stopped rising with price near or below the midline"
+    for lookback in range(max(0, index - 4), index):
+        candidate = bars[lookback]
+        candidate_prev = bars[lookback - 1] if lookback > 0 else None
+        if not candidate_prev:
+            continue
+        candidate_close = _num(candidate.get("close"))
+        candidate_mid = _num(candidate.get("bb_mid"))
+        candidate_prev_close = _num(candidate_prev.get("close"))
+        candidate_prev_mid = _num(candidate_prev.get("bb_mid"))
+        if None in (candidate_close, candidate_mid, candidate_prev_close, candidate_prev_mid):
+            continue
+        recent_crossed_up = candidate_prev_close < candidate_prev_mid and candidate_close > candidate_mid
+        recent_crossed_down = candidate_prev_close > candidate_prev_mid and candidate_close < candidate_mid
+        if recent_crossed_up and close > mid and slope > 0 and not flat and above >= 0.8:
+            return "LONG", conf, "Recent BB mid cross confirmed by flattening/rising midline"
+        if recent_crossed_down and close < mid and slope <= -down_turn_limit and below >= 0.8:
+            return "SHORT", conf, "Recent BB mid cross confirmed by flattening/falling midline"
+    if crossed_up and slope > 0 and not flat:
+        return "LONG", conf, "Closed across BB mid with upward non-flat midline"
+    if crossed_down and slope < 0 and not flat:
+        return "SHORT", conf, "Closed across BB mid with downward non-flat midline"
+    if crossed_down and tight_flat and below >= 0.9:
+        return "SHORT", conf, "Closed below BB mid while midline flattened"
+    if crossed_up and tight_flat and above >= 0.9:
+        return "LONG", conf, "Closed above BB mid while midline flattened"
+    if atr is not None and body < atr * 0.1:
+        return None, 0.0, ""
     if prev_below > 0.5 and close > mid and above > 0.5 and slope > 0 and not flat:
         return "LONG", conf, "Majority candle body crossed above BB mid with upward non-flat midline"
     if prev_above > 0.5 and close < mid and below > 0.5 and slope < 0 and not flat:
@@ -619,6 +659,35 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
     max_trades_per_day = None if is_mid_cross_strategy else (8 if strategy_id.endswith("_1m") else 4)
     last_exit_index = -10_000
     trades_by_day: dict[str, int] = {}
+
+    def close_position(exit_price: float, exit_time: str, reason: str) -> None:
+        nonlocal position, next_id, last_exit_index
+        if position is None:
+            return
+        pnl_per_share = _pnl(position["side"], position["entry"], exit_price)
+        trades.append(
+            {
+                "id": next_id,
+                "name": f"{symbol} {next_id}",
+                "symbol": symbol,
+                "day": position["day"],
+                "side": position["side"],
+                "entryTime": position["entryTime"],
+                "exitTime": exit_time,
+                "entry": round(position["entry"], 6),
+                "exit": round(exit_price, 6),
+                "shares": position["shares"],
+                "pnl": round(pnl_per_share, 6),
+                "pnlTotal": round(pnl_per_share * position["shares"], 6),
+                "reason": reason,
+                "entryReason": position["entryReason"],
+            }
+        )
+        next_id += 1
+        trades_by_day[position["day"]] = trades_by_day.get(position["day"], 0) + 1
+        last_exit_index = index
+        position = None
+
     for index, bar in enumerate(bars):
         side, confidence, reason = _fast_signal(strategy_id, bar, prev, bars, index)
         prev = bar
@@ -627,16 +696,22 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             continue
         time_key = str(bar.get("time_key"))
         day = str(bar.get("date") or time_key[:10])
+        final_bar = _is_final_bar(bars, index)
         if side is None:
+            if position is not None and final_bar:
+                close_position(price, time_key, "session_end")
             continue
         is_mid_cross = strategy_id.startswith("bb_mid_cross_")
-        is_cold_start = reason.startswith("Cold-start")
+        if is_mid_cross and time_key[11:16] > BB_MID_LAST_ENTRY_TIME:
+            if position is not None and final_bar:
+                close_position(price, time_key, "session_end")
+            continue
         if position is None:
             if is_mid_cross and time_key[11:16] < BB_MID_FIRST_ENTRY_TIME:
                 continue
-            if is_mid_cross and not is_cold_start and _is_choppy_around_mid(bars, index):
+            if is_mid_cross and not reason.startswith("Initial trend-side") and _is_choppy_around_mid(bars, index):
                 continue
-            if _is_final_bar(bars, index):
+            if final_bar:
                 continue
             if index - last_exit_index < cooldown:
                 continue
@@ -655,33 +730,12 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             continue
         if side == position["side"]:
             continue
-        if is_mid_cross and is_cold_start:
+        if is_mid_cross and reason.startswith("Initial trend-side"):
             continue
         if index - position["entryIndex"] < cooldown:
             continue
-        pnl_per_share = _pnl(position["side"], position["entry"], price)
-        trades.append(
-            {
-                "id": next_id,
-                "name": f"{symbol} {next_id}",
-                "symbol": symbol,
-                "day": position["day"],
-                "side": position["side"],
-                "entryTime": position["entryTime"],
-                "exitTime": time_key,
-                "entry": round(position["entry"], 6),
-                "exit": round(price, 6),
-                "shares": position["shares"],
-                "pnl": round(pnl_per_share, 6),
-                "pnlTotal": round(pnl_per_share * position["shares"], 6),
-                "reason": "opposite_signal",
-                "entryReason": position["entryReason"],
-            }
-        )
-        next_id += 1
-        trades_by_day[position["day"]] = trades_by_day.get(position["day"], 0) + 1
-        last_exit_index = index
-        if not _is_final_bar(bars, index) and (max_trades_per_day is None or trades_by_day.get(day, 0) < max_trades_per_day):
+        close_position(price, time_key, "opposite_signal")
+        if not final_bar and (max_trades_per_day is None or trades_by_day.get(day, 0) < max_trades_per_day):
             position = {
                 "side": side,
                 "entry": price,
@@ -692,8 +746,8 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
                 "entryReason": f"{label}: {reason}",
                 "confidence": confidence,
             }
-        else:
-            position = None
+        if position is not None and final_bar:
+            close_position(price, time_key, "session_end")
     return trades
 
 

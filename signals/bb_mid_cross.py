@@ -1,6 +1,6 @@
 import pandas as pd
 
-from indicators.bollinger_bands import BollingerBands
+from indicators.bollinger_bands import BB_MID_FLAT_TOLERANCE, BollingerBands
 from models.types import SignalDirection, SignalResult
 from signals.base import Signal
 from signals.registry import register
@@ -46,7 +46,7 @@ class BBMidCross(Signal):
                     signal = self._cold_start_signal(records, pos)
                 results.append(signal)
                 continue
-            signal = self._higher_timeframe_signal(row, prev, body_threshold)
+            signal = self._higher_timeframe_signal(records, pos, body_threshold)
             if signal.direction == SignalDirection.NEUTRAL:
                 signal = self._cold_start_signal(records, pos)
             results.append(signal)
@@ -63,15 +63,47 @@ class BBMidCross(Signal):
             return SignalResult(SignalDirection.SELL, self._confidence(row, -1), self.weight, "Full candle close crossed below BB mid while BB mid slope turned downward", self.name, self.timeframe)
         return self.neutral("No BB midline close cross with slope turn")
 
-    def _higher_timeframe_signal(self, row, prev, body_threshold: float) -> SignalResult:
+    def _higher_timeframe_signal(self, records: list[dict], pos: int, body_threshold: float) -> SignalResult:
+        row = records[pos]
+        prev = records[pos - 1]
         body = abs(row["close"] - row["open"])
         atr = row.get("atr14")
-        if pd.notna(atr) and body < atr * 0.1:
-            return self.neutral("Skipped doji-like candle")
         prev_above, prev_below = self._body_side_ratios(prev)
         above, below = self._body_side_ratios(row)
         slope = row["bb_mid_slope"]
+        prev_slope = prev.get("bb_mid_slope")
         flat = bool(row.get("bb_mid_flat", False))
+        crossed_up = prev["close"] < prev["bb_mid"] and row["close"] > row["bb_mid"]
+        crossed_down = prev["close"] > prev["bb_mid"] and row["close"] < row["bb_mid"]
+        flat_limit = row["close"] * BB_MID_FLAT_TOLERANCE
+        tight_flat = abs(slope) <= row["close"] * (BB_MID_FLAT_TOLERANCE * 0.1)
+        prev_flat = pd.notna(prev_slope) and abs(prev_slope) <= flat_limit
+        prev_falling = pd.notna(prev_slope) and prev_slope < -flat_limit
+        near_mid = abs(row["close"] - row["bb_mid"]) <= flat_limit
+        down_turn_limit = flat_limit * 0.37
+        if (prev_falling and flat and near_mid) or (prev_flat and prev_slope <= 0 and slope > 0 and above >= 0.8):
+            return SignalResult(SignalDirection.BUY, self._confidence(row, 1), self.weight, "BB mid stopped falling with price near or above the midline", self.name, self.timeframe)
+        if prev_flat and prev_slope >= 0 and slope <= -down_turn_limit and below >= 0.8:
+            return SignalResult(SignalDirection.SELL, self._confidence(row, -1), self.weight, "BB mid stopped rising with price near or below the midline", self.name, self.timeframe)
+        for lookback in range(max(1, pos - 4), pos):
+            candidate = records[lookback]
+            candidate_prev = records[lookback - 1]
+            recent_crossed_up = candidate_prev["close"] < candidate_prev["bb_mid"] and candidate["close"] > candidate["bb_mid"]
+            recent_crossed_down = candidate_prev["close"] > candidate_prev["bb_mid"] and candidate["close"] < candidate["bb_mid"]
+            if recent_crossed_up and row["close"] > row["bb_mid"] and slope > 0 and not flat and above >= 0.8:
+                return SignalResult(SignalDirection.BUY, self._confidence(row, 1), self.weight, "Recent BB mid cross confirmed by flattening/rising midline", self.name, self.timeframe)
+            if recent_crossed_down and row["close"] < row["bb_mid"] and slope <= -down_turn_limit and below >= 0.8:
+                return SignalResult(SignalDirection.SELL, self._confidence(row, -1), self.weight, "Recent BB mid cross confirmed by flattening/falling midline", self.name, self.timeframe)
+        if crossed_up and slope > 0 and not flat:
+            return SignalResult(SignalDirection.BUY, self._confidence(row, 1), self.weight, "Closed across BB mid with upward non-flat midline", self.name, self.timeframe)
+        if crossed_down and slope < 0 and not flat:
+            return SignalResult(SignalDirection.SELL, self._confidence(row, -1), self.weight, "Closed across BB mid with downward non-flat midline", self.name, self.timeframe)
+        if crossed_down and tight_flat and below >= 0.9:
+            return SignalResult(SignalDirection.SELL, self._confidence(row, -1), self.weight, "Closed below BB mid while midline flattened", self.name, self.timeframe)
+        if crossed_up and tight_flat and above >= 0.9:
+            return SignalResult(SignalDirection.BUY, self._confidence(row, 1), self.weight, "Closed above BB mid while midline flattened", self.name, self.timeframe)
+        if pd.notna(atr) and body < atr * 0.1:
+            return self.neutral("Skipped doji-like candle")
         if prev_below > body_threshold and row["close"] > row["bb_mid"] and above > body_threshold and slope > 0 and not flat:
             return SignalResult(SignalDirection.BUY, self._confidence(row, 1), self.weight, "Majority body crossed above BB mid with upward non-flat midline", self.name, self.timeframe)
         if prev_above > body_threshold and row["close"] < row["bb_mid"] and below > body_threshold and slope < 0 and not flat:
@@ -85,7 +117,9 @@ class BBMidCross(Signal):
         if body <= 0:
             return 0.0, 0.0
         mid = row["bb_mid"]
-        return max(0.0, top - mid) / body, max(0.0, mid - bottom) / body
+        above = max(0.0, top - max(mid, bottom)) / body
+        below = max(0.0, min(mid, top) - bottom) / body
+        return min(1.0, above), min(1.0, below)
 
     def _cold_start_signal(self, records: list[dict], pos: int) -> SignalResult:
         row = records[pos]
