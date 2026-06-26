@@ -3577,10 +3577,33 @@
       const currentAction = liveStrategySignal.markerAction || liveStrategySignal.action;
       if (['BUY', 'SELL'].includes(currentAction)) signals.push({ ...liveStrategySignal, action: currentAction });
       const seen = new Set();
-      signals.forEach(signal => {
-        const key = `${signal.time}:${signal.action}:${signal.strategy || ''}`;
-        if (seen.has(key)) return;
-        seen.add(key);
+      const visibleSignals = signals
+        .filter(signal => ['BUY', 'SELL'].includes(signal.action) && localIndex.has(signal.time))
+        .filter(signal => {
+          const key = `${signal.time}:${signal.action}:${signal.strategy || ''}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => (localIndex.get(a.time) ?? 0) - (localIndex.get(b.time) ?? 0));
+      visibleSignals.forEach((signal, index) => {
+        const startIndex = localIndex.get(signal.time);
+        if (startIndex === undefined) return;
+        const nextOpposite = visibleSignals.slice(index + 1).find(item => item.action !== signal.action);
+        const endIndex = nextOpposite ? localIndex.get(nextOpposite.time) : bars.length - 1;
+        if (endIndex !== undefined && endIndex > startIndex) {
+          const x1 = Math.min(x(startIndex), x(endIndex));
+          const width = Math.max(3, Math.abs(x(endIndex) - x(startIndex)));
+          const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          bg.setAttribute('x', x1);
+          bg.setAttribute('y', top);
+          bg.setAttribute('width', width);
+          bg.setAttribute('height', bottom - top);
+          bg.setAttribute('class', signal.action === 'BUY' ? 'trade-bg-win' : 'trade-bg-loss');
+          target.appendChild(bg);
+        }
+      });
+      visibleSignals.forEach(signal => {
         const i = localIndex.get(signal.time);
         if (i === undefined) return;
         const b = bars[i];
