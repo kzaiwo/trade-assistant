@@ -801,9 +801,20 @@
     .candle-wick-up { stroke: #147a48; stroke-width: 1; }
     .candle-wick-down { stroke: #b73734; stroke-width: 1; }
     .bb-mid { fill: none; stroke: #c98216; stroke-width: 1.9; }
-    .bb-mid-turn-up { fill: var(--green); stroke: white; stroke-width: 1.4; }
-    .bb-mid-turn-down { fill: var(--red); stroke: white; stroke-width: 1.4; }
-    .bb-mid-turn-flat { fill: #9aa3af; stroke: white; stroke-width: 1; opacity: 0.74; }
+    .bb-mid-turn-up { fill: rgba(20, 122, 72, 0.62); stroke: white; stroke-width: 1.2; }
+    .bb-mid-turn-down { fill: rgba(183, 55, 52, 0.62); stroke: white; stroke-width: 1.2; }
+    .bb-mid-arrow-up, .bb-mid-arrow-down {
+      font-size: 13px;
+      font-weight: 900;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      stroke: white;
+      stroke-width: 2.4px;
+      paint-order: stroke fill;
+    }
+    .bb-mid-arrow-up { fill: rgba(20, 122, 72, 0.72); }
+    .bb-mid-arrow-down { fill: rgba(183, 55, 52, 0.72); }
+    .bb-mid-turn-flat { fill: rgba(120, 130, 145, 0.56); stroke: white; stroke-width: 1; opacity: 0.68; }
     .bb-upper { fill: none; stroke: #8b5cf6; stroke-width: 1.55; }
     .bb-lower { fill: none; stroke: #7fc8ff; stroke-width: 1.55; }
     .bb-band { display: none; }
@@ -876,7 +887,7 @@
       position: fixed;
       pointer-events: none;
       z-index: 5;
-      background: rgba(255, 255, 255, 0.96);
+      background: rgba(255, 255, 255, 0.88);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 8px 10px;
@@ -885,7 +896,10 @@
       line-height: 1.35;
       color: var(--ink);
       min-width: 160px;
+      max-width: 380px;
       display: none;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
     }
     .tooltip-title { font-weight: 700; margin-bottom: 6px; }
     .tooltip-grid {
@@ -900,6 +914,10 @@
       padding-top: 8px;
       border-top: 1px solid var(--line);
     }
+    .tooltip-emphasis { font-weight: 800; }
+    .tooltip-positive { color: var(--green); font-weight: 800; }
+    .tooltip-negative { color: var(--red); font-weight: 800; }
+    .tooltip-muted-value { color: var(--muted); }
     .signal-badges {
       display: flex;
       gap: 6px;
@@ -1189,9 +1207,11 @@
       <div class="calendar-head">
         <h2>Live Trend <span class="build-stamp">signals-v2</span></h2>
         <div class="chart-tools">
+          <button id="liveGoOldest" class="mini-reset" title="Go to oldest visible session candle">Oldest</button>
           <button id="liveZoomOut" class="icon-btn" title="Zoom out">-</button>
           <button id="liveZoomIn" class="icon-btn" title="Zoom in">+</button>
           <button id="liveResetZoom" class="mini-reset" title="Reset live zoom">Reset</button>
+          <button id="liveGoNewest" class="mini-reset" title="Go to newest visible session candle">Newest</button>
           <div class="live-stream-state"><span id="liveStreamDot" class="stream-dot"></span><span id="liveTrendMeta">Stream stopped</span></div>
         </div>
       </div>
@@ -1292,7 +1312,8 @@
                 <option value="120" selected>120</option><option value="240">240</option>
                 <option value="500">500</option>
               </select>
-              <button id="goLatest" class="mini-reset">Latest</button>
+              <button id="goOldest" class="mini-reset">Oldest</button>
+              <button id="goLatest" class="mini-reset">Newest</button>
               <span id="zoomCount" class="muted"></span>
               <button id="saveSelection" class="mini-reset" title="Save selected candle or candle pair">Save Note</button>
             </div>
@@ -1512,6 +1533,7 @@
     const fmtMoney = v => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const fmtTime = t => t.slice(11, 16);
     const fmtLevel = v => v == null ? 'n/a' : Number(v).toFixed(2);
+    const fmtBbMid = v => v == null || !Number.isFinite(Number(v)) ? 'n/a' : Number(v).toFixed(3);
     const esc = v => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const estimatedDefaultShares = (bars = DATA?.bars || []) => {
       for (let i = bars.length - 1; i >= 0; i--) {
@@ -1747,6 +1769,7 @@
 
     function dashboardState() {
       return {
+        mode: appMode,
         symbol: fetchSymbol.value, timeframe: fetchTimeframe.value,
         start: fetchStart.value, end: fetchEnd.value,
         extended: true,
@@ -1781,6 +1804,7 @@
           delete saved.zoomStart; delete saved.zoomEnd;
         }
         if (saved.sessionFilter && !['all','pre','main','post','night'].includes(saved.sessionFilter)) delete saved.sessionFilter;
+        if (saved.mode && !['live', 'backtest'].includes(saved.mode)) delete saved.mode;
         return saved;
       } catch { return {}; }
     }
@@ -1888,6 +1912,7 @@
       document.getElementById('modeLive').classList.toggle('active', appMode === 'live');
       document.getElementById('modeBacktest').classList.toggle('active', appMode === 'backtest');
       updateHeaderStatus();
+      saveDashboardState();
       if (appMode === 'backtest') {
         if (liveStream) stopLiveStream();
         loadTradeDataSymbols();
@@ -2025,6 +2050,8 @@
       liveZoomIn.addEventListener('click', () => liveZoomBy(0.5));
       liveZoomOut.addEventListener('click', () => liveZoomBy(2));
       liveResetZoom.addEventListener('click', () => { liveZoomStart = 0; liveZoomEnd = 1; renderLiveInteractiveChart(); });
+      document.getElementById('liveGoOldest').addEventListener('click', () => liveJumpToEdge('oldest'));
+      document.getElementById('liveGoNewest').addEventListener('click', () => liveJumpToEdge('newest'));
       liveCandleChart.addEventListener('wheel', event => {
         if (!(event.ctrlKey || event.metaKey)) return;
         event.preventDefault();
@@ -2087,6 +2114,7 @@
       document.getElementById('zoomOut').addEventListener('click', () => zoomBy(2));
       document.getElementById('resetZoom').addEventListener('click', () => { zoomStart = 0; zoomEnd = 1; render(); });
       document.getElementById('zoomPreset').addEventListener('change', event => zoomToCount(Number(event.target.value)));
+      document.getElementById('goOldest').addEventListener('click', () => zoomToCount(Number(document.getElementById('zoomPreset').value), false));
       document.getElementById('goLatest').addEventListener('click', () => zoomToCount(Number(document.getElementById('zoomPreset').value), true));
       document.getElementById('saveSelection').addEventListener('click', saveCurrentSelection);
       document.getElementById('copySavedNotes').addEventListener('click', copySavedNotes);
@@ -2145,8 +2173,9 @@
       [fetchStart, fetchEnd].forEach(node => node.addEventListener('change', () => scheduleBacktestFetch()));
       [fetchSymbol, fetchTimeframe, fetchStart, fetchEnd, shareSize, document.getElementById('extendedHours')].forEach(node => node.addEventListener('change', saveDashboardState));
       window.addEventListener('beforeunload', saveDashboardState);
-      setMode('backtest');
-      render();
+      setMode(restored.mode || 'backtest');
+      if (appMode !== 'backtest') renderLiveInteractiveChart();
+      else render();
     }
 
     function resetForPayload(payload, options = {}) {
@@ -2580,7 +2609,7 @@
           <div class="live-levels">
             <div>Last <span>${fmtLevel(levels.last)}</span></div>
             <div>VWAP <span>${fmtLevel(levels.vwap)}</span></div>
-            <div>BB Mid <span>${fmtLevel(levels.bbMid)}</span></div>
+            <div>BB Mid <span>${fmtBbMid(levels.bbMid)}</span></div>
             <div>BB Upper <span>${fmtLevel(levels.bbUpper)}</span></div>
             <div>Support <span>${fmtLevel(levels.support20)}</span></div>
             <div>Resistance <span>${fmtLevel(levels.resistance20)}</span></div>
@@ -2667,7 +2696,7 @@
         ema: haystack.includes('ema')
       };
       const rows = [
-        ['BB', `mid ${fmtLevel(bar.bb_mid)} · move ${bbMidMoveText(bar, data.bars || [])}`, used.bb],
+        ['BB', `mid ${fmtBbMid(bar.bb_mid)} · move ${bbMidMoveText(bar, data.bars || [])}`, used.bb],
         ['MACD', `hist ${fmtLevel(bar.macd_hist)}`, used.macd],
         ['StochRSI', `${fmtLevel(bar.stoch_rsi_k)} / ${fmtLevel(bar.stoch_rsi_d)}`, used.stoch],
         ['VWAP', fmtLevel(bar.vwap), used.vwap],
@@ -2774,7 +2803,7 @@
           <td>${fmtLevel(b.open)}</td><td>${fmtLevel(b.high)}</td><td>${fmtLevel(b.low)}</td><td>${fmtLevel(b.close)}</td>
           <td class="${delta >= 0 ? 'profit' : 'loss'}">${fmtMoney(delta)}</td>
           <td>${pct.toFixed(2)}%</td>
-          <td>${fmtLevel(b.bb_mid)}</td><td>${fmtLevel(b.vwap)}</td>
+          <td>${fmtBbMid(b.bb_mid)}</td><td>${fmtLevel(b.vwap)}</td>
           <td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td>
           <td>${b.volume || 0}</td>
           <td class="${bbMove.big ? 'profit' : ''}">${bbMoveLabel}</td>
@@ -3149,7 +3178,7 @@
       const data = latestLiveData || {};
       const a = data.analysis || {};
       const levels = a.levels || {};
-      return `**Local Analysis**\n\n**Bias:** ${a.bias || 'n/a'} ${a.confidence || 0}%\n\n**Levels:** VWAP ${fmtLevel(levels.vwap)}, BB Mid ${fmtLevel(levels.bbMid)}, Last ${fmtLevel(levels.last)}\n\n**Movement:** ${a.possibleMovement || 'No local live analysis available yet.'}`;
+      return `**Local Analysis**\n\n**Bias:** ${a.bias || 'n/a'} ${a.confidence || 0}%\n\n**Levels:** VWAP ${fmtLevel(levels.vwap)}, BB Mid ${fmtBbMid(levels.bbMid)}, Last ${fmtLevel(levels.last)}\n\n**Movement:** ${a.possibleMovement || 'No local live analysis available yet.'}`;
     }
 
     function sendCurrentCandleToGpt() {
@@ -3246,6 +3275,24 @@
       return source.slice(start, Math.max(start + 2, end));
     }
 
+    function compactXScale(count, plotW, left, zoomWidth = 1) {
+      if (count <= 1) {
+        const center = left + plotW / 2;
+        return { drawW: 28, slotCount: 1, compact: true, x: () => center };
+      }
+      const compact = count <= 56 && zoomWidth <= 0.42;
+      const maxGap = count <= 32 ? 18 : 16;
+      const drawW = compact ? Math.min(plotW, (count - 1) * maxGap) : plotW;
+      const startX = left + (compact ? Math.max(0, (plotW - drawW) / 2) : 0);
+      const xMax = Math.max(1, count - 1);
+      return {
+        drawW,
+        slotCount: count,
+        compact,
+        x: i => startX + i / xMax * drawW
+      };
+    }
+
     function liveZoomBy(factor) {
       const center = (liveZoomStart + liveZoomEnd) / 2;
       const width = Math.min(1, Math.max(0.04, (liveZoomEnd - liveZoomStart) * factor));
@@ -3254,6 +3301,18 @@
       if (liveZoomEnd - liveZoomStart < width) {
         if (liveZoomStart === 0) liveZoomEnd = Math.min(1, width);
         if (liveZoomEnd === 1) liveZoomStart = Math.max(0, 1 - width);
+      }
+      renderLiveInteractiveChart();
+    }
+
+    function liveJumpToEdge(edge) {
+      const width = Math.min(1, Math.max(0.04, liveZoomEnd - liveZoomStart || 0.25));
+      if (edge === 'oldest') {
+        liveZoomStart = 0;
+        liveZoomEnd = Math.min(1, width);
+      } else {
+        liveZoomEnd = 1;
+        liveZoomStart = Math.max(0, 1 - width);
       }
       renderLiveInteractiveChart();
     }
@@ -3276,7 +3335,9 @@
       const margin = { left: 64, right: 72, top: 24, bottom: 34 };
       const plotW = W - margin.left - margin.right;
       const liveSlotCount = bars.length;
-      const liveDrawW = plotW;
+      const liveScale = compactXScale(liveSlotCount, plotW, margin.left, liveZoomEnd - liveZoomStart);
+      const liveDrawW = liveScale.drawW;
+      const x = liveScale.x;
       const priceTop = 30, priceBottom = 500;
       const macdTop = 536, macdBottom = 675;
       const stochTop = 710, stochBottom = 835;
@@ -3290,8 +3351,6 @@
       }
       const pMin = Math.min(...prices), pMax = Math.max(...prices);
       const pad = (pMax - pMin) * 0.08 || 1;
-      const xMax = Math.max(1, liveSlotCount - 1);
-      const x = i => margin.left + i / xMax * liveDrawW;
       const y = v => priceBottom - (Number(v) - (pMin - pad)) / ((pMax + pad) - (pMin - pad)) * (priceBottom - priceTop);
 
       const withLiveSvg = fn => {
@@ -3511,7 +3570,7 @@
         const num = (v, d = 2) => v === null || v === undefined ? '-' : Number(v).toFixed(d);
         const alerts = liveCandleAlerts(liveBars, b);
         const signal = liveSignalForBar(b);
-        const bbMove = bbMidMoveMeta(b, liveBars);
+        const prev = bars[idx - 1];
         guide.setAttribute('x1', xx);
         guide.setAttribute('x2', xx);
         guide.setAttribute('opacity', '0.55');
@@ -3525,27 +3584,12 @@
             <strong>Price</strong>
           </div>
           <div class="tooltip-grid">
-            ${cell('Open', money(b.open))} ${cell('High', money(b.high))}
-            ${cell('Low', money(b.low))} ${cell('Close', money(b.close))}
+            ${cell('Open', money(b.open))} ${cell('Close', `<span class="${b.close >= b.open ? 'tooltip-positive' : 'tooltip-negative'}">${money(b.close)}</span>`)}
+            ${cell('High', money(b.high))} ${cell('Low', money(b.low))}
           </div>
-          <div class="tooltip-section">
-            <strong>Levels</strong>
-          </div>
-          <div class="tooltip-grid">
-            ${cell('BB Mid', money(b.bb_mid))} ${cell('BB Upper', money(b.bb_upper))}
-            ${cell('BB Lower', money(b.bb_lower))} ${cell('VWAP', money(b.vwap))}
-          </div>
-          <div class="tooltip-section">
-            <strong>Momentum</strong>
-          </div>
-          <div class="tooltip-grid">
-            ${cell('MACD Hist', num(b.macd_hist, 3))} ${cell('BB Mid Move', fmtPct(bbMove.move))}
-            ${cell('Session Avg BB Mid', fmtPct(bbMove.avg))} ${cell('Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x${bbMove.big ? ' big' : ''}` : 'n/a')}
-            ${cell('ATR14', num(b.atr14, 2))} ${cell('Volume', b.volume || 0)}
-            ${cell('Stoch K', num(b.stoch_rsi_k, 1))} ${cell('Stoch D', num(b.stoch_rsi_d, 1))}
-          </div>
+          ${bbMidTooltipSection(b, prev, bars, 'BB Mid')}
           ${signal ? `<div class="tooltip-section"><strong>Signal</strong><br>${esc(signal.action || signal.side || '')}: ${esc(signal.reason || 'No reason recorded.')}</div>` : ''}
-          ${alerts.length ? `<div class="tooltip-section"><strong>Alerts</strong><br>${alerts.map(a => `<span class="live-signal alert" title="${esc(a.detail)}">${esc(a.label)}</span>`).join(' ')}</div>` : ''}
+          ${alerts.length ? `<div class="tooltip-section"><strong>Alerts</strong><br>${alerts.slice(0, 2).map(a => `<span class="live-signal alert" title="${esc(a.detail)}">${esc(a.label)}</span>`).join(' ')}</div>` : ''}
           ${liveMeasurementHtml(b)}`;
         tooltip.style.display = 'block';
         tooltip.style.left = `${Math.min(window.innerWidth - 460, Math.max(12, clientX + 14))}px`;
@@ -3828,7 +3872,7 @@
 
     function candleSummary(b) {
       const dayBars = allBarsForCurrentDay();
-      return `${b.date} ${fmtTime(b.time_key)} O $${b.open.toFixed(2)} H $${b.high.toFixed(2)} L $${b.low.toFixed(2)} C $${b.close.toFixed(2)} | BB Mid $${b.bb_mid?.toFixed(2) ?? '-'} | BB Mid Move ${bbMidMoveText(b, dayBars)} | VWAP $${b.vwap?.toFixed(2) ?? '-'} | MACD DIF ${b.macd_dif?.toFixed(3) ?? '-'} DEA ${b.macd_dea?.toFixed(3) ?? '-'}`;
+      return `${b.date} ${fmtTime(b.time_key)} O $${b.open.toFixed(2)} H $${b.high.toFixed(2)} L $${b.low.toFixed(2)} C $${b.close.toFixed(2)} | BB Mid $${fmtBbMid(b.bb_mid)} | BB Mid Move ${bbMidMoveText(b, dayBars)} | VWAP $${b.vwap?.toFixed(2) ?? '-'} | MACD DIF ${b.macd_dif?.toFixed(3) ?? '-'} DEA ${b.macd_dea?.toFixed(3) ?? '-'}`;
     }
 
     function pairSummary(a, b) {
@@ -3958,11 +4002,11 @@
       const macdTop = 536, macdBottom = showStoch.checked ? 675 : 835;
       const stochTop = 710, stochBottom = 835;
       const hoverBottom = showStoch.checked ? stochBottom : macdBottom;
-      const xMin = 0, xMax = Math.max(1, bars.length - 1);
+      const chartScale = compactXScale(bars.length, plotW, margin.left, zoomEnd - zoomStart);
       const prices = bars.flatMap(b => [b.high, b.low, showBands.checked ? b.bb_upper : null, showBands.checked ? b.bb_lower : null]).filter(v => v !== null);
       const pMin = Math.min(...prices), pMax = Math.max(...prices);
       const pad = (pMax - pMin) * 0.08 || 1;
-      const x = i => margin.left + (i - xMin) / (xMax - xMin) * plotW;
+      const x = chartScale.x;
       const y = v => priceBottom - (v - (pMin - pad)) / ((pMax + pad) - (pMin - pad)) * (priceBottom - priceTop);
 
       rect(margin.left, priceTop, W - margin.left - margin.right, priceBottom - priceTop, 'panel-bg');
@@ -3981,7 +4025,7 @@
         addPath(pathFor(bars.map((b, i) => [i, b.bb_lower]), x, y), 'bb-lower');
       }
       if (showVwap.checked) addPath(pathFor(bars.map((b, i) => [i, b.vwap]), x, y), 'vwap-line');
-      drawCandles(bars, x, y, plotW);
+      drawCandles(bars, x, y, chartScale.drawW, chartScale.slotCount);
       drawSessionSeparators(bars, x, priceTop, priceBottom);
       drawSpikeMarkers(bars, x, y);
       addPath(pathFor(bars.map((b, i) => [i, b.bb_mid]), x, y), 'bb-mid');
@@ -3990,7 +4034,7 @@
 
       drawMeasurement(bars, x, y, priceTop, priceBottom);
       if (showTrades.checked) drawTrades(bars, trades, x, y, priceTop, priceBottom);
-      if (showMacd.checked) drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW);
+      if (showMacd.checked) drawMacd(bars, x, macdTop, macdBottom, W, margin, plotW, chartScale.slotCount, chartScale.drawW);
       if (showStoch.checked) drawStochRsi(bars, x, stochTop, stochBottom, W, margin);
       drawHoverLayer(bars, trades, x, y, priceTop, hoverBottom, W, margin);
     }
@@ -4026,7 +4070,8 @@
     }
 
     function drawCandles(bars, x, y, plotW, slotCount = bars.length) {
-      const candleW = Math.max(2, Math.min(8, (plotW / Math.max(1, slotCount)) * 0.82));
+      const maxW = slotCount <= 32 ? 16 : slotCount <= 80 ? 13 : 10;
+      const candleW = Math.max(3, Math.min(maxW, (plotW / Math.max(1, slotCount)) * 1.14));
       bars.forEach((b, i) => {
         const up = b.close > b.open;
         const down = b.close < b.open;
@@ -4074,6 +4119,40 @@
       if (!Number.isFinite(slope) || Math.abs(slope) < 1e-9) return 0;
       return slope > 0 ? 1 : -1;
     }
+    function bbMidChangeDetail(bar, prev) {
+      const mid = Number(bar?.bb_mid);
+      const prevMid = Number(prev?.bb_mid);
+      const change = Number.isFinite(mid) && Number.isFinite(prevMid) ? mid - prevMid : null;
+      const pct = Number.isFinite(change) && Number.isFinite(prevMid) && prevMid !== 0 ? change / prevMid * 100 : null;
+      const prevLabel = Number.isFinite(prevMid) ? fmtBbMid(prevMid) : 'n/a';
+      const midLabel = Number.isFinite(mid) ? fmtBbMid(mid) : 'n/a';
+      return `prev ${prevLabel} -> now ${midLabel} | change ${Number.isFinite(change) ? change.toFixed(3) : 'n/a'} | ${fmtPct(pct)}`;
+    }
+    function bbMidTooltipSection(bar, prev, bars, label = 'BB Mid') {
+      const mid = Number(bar?.bb_mid);
+      const prevMid = Number(prev?.bb_mid);
+      const slope = Number(bar?.bb_mid_slope ?? bar?.bb_slope);
+      const prevSlope = Number(prev?.bb_mid_slope ?? prev?.bb_slope);
+      const change = Number.isFinite(mid) && Number.isFinite(prevMid) ? mid - prevMid : null;
+      const pct = Number.isFinite(change) && Number.isFinite(prevMid) && prevMid !== 0 ? change / prevMid * 100 : null;
+      const idx = (bars || []).findIndex(item => item?.time_key === bar?.time_key);
+      const soFar = idx >= 0 ? bars.slice(0, idx + 1) : (bars || []);
+      const avg = avgBbMidMovePct(soFar);
+      const ratio = Number.isFinite(pct) && Number.isFinite(avg) && avg > 0 ? Math.abs(pct) / avg : null;
+      const fmtRaw = value => Number.isFinite(value) ? value.toFixed(3) : 'n/a';
+      const tone = Number.isFinite(change) && change > 0 ? 'tooltip-positive' : Number.isFinite(change) && change < 0 ? 'tooltip-negative' : 'tooltip-muted-value';
+      const cell = (name, value) => `<strong>${name}</strong><span>${value}</span>`;
+      return `
+        <div class="tooltip-section">
+          <strong>${esc(label)}</strong>
+        </div>
+        <div class="tooltip-grid">
+          ${cell('Previous', `<span class="tooltip-muted-value">${Number.isFinite(prevMid) ? fmtBbMid(prevMid) : 'n/a'}</span>`)} ${cell('Current', `<span class="tooltip-emphasis">${Number.isFinite(mid) ? fmtBbMid(mid) : 'n/a'}</span>`)}
+          ${cell('Change', `<span class="${tone}">${fmtRaw(change)}</span>`)} ${cell('% Change', `<span class="${tone}">${fmtPct(pct)}</span>`)}
+          ${cell('Slope', `<span class="${Number.isFinite(slope) && slope > 0 ? 'tooltip-positive' : Number.isFinite(slope) && slope < 0 ? 'tooltip-negative' : 'tooltip-muted-value'}">${fmtRaw(slope)}</span>`)} ${cell('Avg Move So Far', fmtPct(avg))}
+          ${cell('Vs Avg', Number.isFinite(ratio) ? `${ratio.toFixed(1)}x` : 'n/a')} ${cell('Prev Slope', `<span class="tooltip-muted-value">${fmtRaw(prevSlope)}</span>`)}
+        </div>`;
+    }
     function drawBbMidTurnMarkers(bars, x, bottom, options = {}) {
       const target = window.__codexLiveSvgTarget || svg;
       const y = bottom - (options.offset ?? 18);
@@ -4085,32 +4164,55 @@
         const prev = bars[index - 1];
         const mid = Number(bar?.bb_mid);
         const prevMid = Number(prev?.bb_mid);
+        const slope = Number(bar?.bb_mid_slope ?? bar?.bb_slope);
+        const prevSlope = Number(prev?.bb_mid_slope ?? prev?.bb_slope);
         const sameMid = index > 0 && Number.isFinite(mid) && Number.isFinite(prevMid) && mid === prevMid;
         const flatMid = index > 0 && !sign && Number.isFinite(mid) && Number.isFinite(prevMid);
         const changed = previousSign && sign && sign !== previousSign;
-        if (!changed && !sameMid && !flatMid) {
+        const steeper = !changed && index > 0 && sign && Number.isFinite(slope) && Number.isFinite(prevSlope)
+          && (Math.sign(prevSlope) === sign || prevSlope === 0) && Math.abs(slope) > Math.abs(prevSlope);
+        if (!changed && !steeper && !sameMid && !flatMid) {
           if (sign) previousSign = sign;
           return;
         }
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('cx', x(index));
-        dot.setAttribute('cy', y);
-        dot.setAttribute('r', changed ? radius : neutralRadius);
-        dot.setAttribute('class', changed ? (sign > 0 ? 'bb-mid-turn-up' : 'bb-mid-turn-down') : 'bb-mid-turn-flat');
-        dot.setAttribute('tabindex', '0');
-        dot.setAttribute('aria-label', changed
+        const marker = changed ? document.createElementNS('http://www.w3.org/2000/svg', 'text') : document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        marker.setAttribute('x', x(index));
+        marker.setAttribute('cx', x(index));
+        marker.setAttribute('y', y);
+        marker.setAttribute('cy', y);
+        if (changed) {
+          marker.setAttribute('class', sign > 0 ? 'bb-mid-arrow-up' : 'bb-mid-arrow-down');
+          marker.textContent = sign > 0 ? '▲' : '▼';
+        } else {
+          marker.setAttribute('r', steeper ? radius : neutralRadius);
+          marker.setAttribute('class', steeper ? (sign > 0 ? 'bb-mid-turn-up' : 'bb-mid-turn-down') : 'bb-mid-turn-flat');
+        }
+        marker.setAttribute('tabindex', '0');
+        marker.setAttribute('aria-label', changed
           ? `BB mid turned ${sign > 0 ? 'up' : 'down'} at ${bar.time_key}`
+          : steeper ? `BB mid slope became steeper ${sign > 0 ? 'up' : 'down'} at ${bar.time_key}`
           : sameMid ? `BB mid value unchanged at ${bar.time_key}` : `BB mid is flat at ${bar.time_key}`);
-        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        title.textContent = changed
-          ? `BB mid turned ${sign > 0 ? 'up' : 'down'} at ${fmtTime(bar.time_key)} | move ${fmtPct(bbMidMovePct(bar))}`
-          : sameMid ? `BB mid value unchanged at ${fmtTime(bar.time_key)} | ${fmtLevel(mid)}` : `BB mid flat at ${fmtTime(bar.time_key)} | move ${fmtPct(bbMidMovePct(bar))}`;
-        dot.appendChild(title);
-        target.appendChild(dot);
+        const markerLabel = changed
+          ? `Direction changed ${sign > 0 ? 'up' : 'down'}`
+          : steeper
+            ? `Slope got steeper ${sign > 0 ? 'up' : 'down'}`
+            : sameMid ? 'Value unchanged' : 'Flat midline';
+        marker.addEventListener('mouseenter', event => showBbMidMarkerTooltip(event, bar, prev, bars, markerLabel));
+        marker.addEventListener('mousemove', event => showBbMidMarkerTooltip(event, bar, prev, bars, markerLabel));
+        marker.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+        target.appendChild(marker);
         if (sign) {
           previousSign = sign;
         }
       });
+    }
+    function showBbMidMarkerTooltip(event, bar, prev, bars, markerLabel) {
+      tooltip.innerHTML = `
+        <div class="tooltip-title">${esc(markerLabel)} · ${esc(bar?.date || String(bar?.time_key || '').slice(0, 10))} ${fmtTime(bar?.time_key || '')}</div>
+        ${bbMidTooltipSection(bar, prev, bars, 'BB Mid Details')}`;
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${Math.min(window.innerWidth - 460, Math.max(12, event.clientX + 14))}px`;
+      tooltip.style.top = `${Math.min(window.innerHeight - 300, Math.max(12, event.clientY + 14))}px`;
     }
     function drawHistoricalLastPrice(bars, y, W, margin) {
       const last = bars[bars.length - 1];
@@ -4363,7 +4465,12 @@
       });
       addPath(pathFor(bars.map((b, i) => [i, Number(b.macd_dif)]), x, y2), 'macd-line');
       addPath(pathFor(bars.map((b, i) => [i, Number(b.macd_dea)]), x, y2), 'dea-line');
+      const last = bars[bars.length - 1] || {};
+      const lastHist = Number.isFinite(Number(last.macd_hist)) ? Number(last.macd_hist)
+        : Number.isFinite(Number(last.macd_dif)) && Number.isFinite(Number(last.macd_dea)) ? Number(last.macd_dif) - Number(last.macd_dea)
+        : null;
       text(70, top + 16, 'MACD(8,21,5)', 'axis-label');
+      text(70, top + 32, `DIF ${fmtLevel(last.macd_dif)} · DEA ${fmtLevel(last.macd_dea)} · Hist ${Number.isFinite(lastHist) ? lastHist.toFixed(3) : 'n/a'}`, 'axis-label');
       text(14, y2(max).toFixed(0), max.toFixed(2), 'axis-label');
       text(14, y2(min).toFixed(0), min.toFixed(2), 'axis-label');
     }
@@ -4376,7 +4483,9 @@
       line(margin.left - 6, y2(20), W - margin.right, y2(20), 'grid');
       addPath(pathFor(bars.map((b, i) => [i, Number(b.stoch_rsi_k)]), x, y2), 'stoch-k-line');
       addPath(pathFor(bars.map((b, i) => [i, Number(b.stoch_rsi_d)]), x, y2), 'stoch-d-line');
+      const last = bars[bars.length - 1] || {};
       text(70, top + 16, 'StochRSI', 'axis-label');
+      text(70, top + 32, `K ${fmtLevel(last.stoch_rsi_k)} · D ${fmtLevel(last.stoch_rsi_d)}`, 'axis-label');
       text(20, y2(80) + 4, '80', 'axis-label');
       text(20, y2(20) + 4, '20', 'axis-label');
     }
@@ -4484,7 +4593,7 @@
       return { move, avg, ratio, big };
     }
 
-    function fmtPct(value, digits = 4) {
+    function fmtPct(value, digits = 3) {
       return Number.isFinite(value) ? `${value.toFixed(digits)}%` : 'n/a';
     }
 
@@ -4518,7 +4627,7 @@
       const used = strategyIndicatorSet(strategy);
       const dayBars = allBarsForCurrentDay();
       const rows = [
-        ['BB', `mid ${fmtLevel(bar.bb_mid)} · move ${bbMidMoveText(bar, dayBars)}`, used.bb],
+        ['BB', `mid ${fmtBbMid(bar.bb_mid)} · move ${bbMidMoveText(bar, dayBars)}`, used.bb],
         ['VWAP', fmtLevel(bar.vwap), used.vwap],
         ['MACD', `hist ${fmtLevel(bar.macd_hist)}`, used.macd],
         ['StochRSI', `${fmtLevel(bar.stoch_rsi_k)} / ${fmtLevel(bar.stoch_rsi_d)}`, used.stoch],
@@ -5067,6 +5176,10 @@
     function drawHoverLayer(bars, trades, x, y, top, bottom, W, margin) {
       const plotLeft = margin.left;
       const plotWidth = W - margin.left - margin.right;
+      const firstX = x(0);
+      const lastX = x(Math.max(0, bars.length - 1));
+      const activeLeft = Math.min(firstX, lastX);
+      const activeWidth = Math.max(1, Math.abs(lastX - firstX));
       const signalByTime = new Map();
       const addSignal = (timeKey, action, trade) => {
         if (!signalByTime.has(timeKey)) signalByTime.set(timeKey, []);
@@ -5115,9 +5228,14 @@
         point.x = event.clientX;
         point.y = event.clientY;
         const svgPoint = point.matrixTransform(svg.getScreenCTM().inverse());
-        const svgX = svgPoint.x;
-        const idx = Math.max(0, Math.min(bars.length - 1, Math.round((svgX - plotLeft) / plotWidth * (bars.length - 1))));
-        return [idx, bars[idx]];
+        const idx = Math.max(0, Math.min(bars.length - 1, Math.round((svgPoint.x - activeLeft) / activeWidth * (bars.length - 1))));
+        let best = idx;
+        let bestDist = Math.abs(svgPoint.x - x(idx));
+        for (let j = Math.max(0, idx - 2); j <= Math.min(bars.length - 1, idx + 2); j++) {
+          const dist = Math.abs(svgPoint.x - x(j));
+          if (dist < bestDist) { best = j; bestDist = dist; }
+        }
+        return [best, bars[best]];
       };
 
       const showHoverAt = (idx, b, clientX, clientY) => {
@@ -5125,7 +5243,7 @@
         const cell = (label, value) => `<strong>${label}</strong><span>${value}</span>`;
         const money = v => v === null || v === undefined ? '-' : `$${v.toFixed(2)}`;
         const num = (v, d = 2) => v === null || v === undefined ? '-' : v.toFixed(d);
-        const bbMove = bbMidMoveMeta(b, bars);
+        const prev = bars[idx - 1];
         guide.setAttribute('x1', xx);
         guide.setAttribute('x2', xx);
         guide.setAttribute('opacity', '0.55');
@@ -5135,17 +5253,14 @@
         tooltip.innerHTML = `
           <div class="tooltip-title">${b.date} ${fmtTime(b.time_key)}</div>
           ${signalBadgesHtml(b)}
-          <div class="tooltip-grid">
-            ${cell('Open', money(b.open))} ${cell('High', money(b.high))}
-            ${cell('Low', money(b.low))} ${cell('Close', money(b.close))}
-            ${cell('BB Mid', money(b.bb_mid))} ${cell('BB Upper', money(b.bb_upper))}
-            ${cell('BB Lower', money(b.bb_lower))} ${cell('BB Mid Move', fmtPct(bbMove.move))}
-            ${cell('Avg BB Mid Move', fmtPct(bbMove.avg))} ${cell('Move vs Avg', Number.isFinite(bbMove.ratio) ? `${bbMove.ratio.toFixed(1)}x${bbMove.big ? ' big' : ''}` : 'n/a')}
-            ${cell('VWAP', money(b.vwap))} ${cell('ATR14', num(b.atr14, 2))}
-            ${cell('MACD DIF', num(b.macd_dif, 3))} ${cell('MACD DEA', num(b.macd_dea, 3))}
-            ${cell('RSI14', num(b.rsi14, 1))} ${cell('Stoch K', num(b.stoch_rsi_k, 1))}
-            ${cell('Stoch D', num(b.stoch_rsi_d, 1))}
+          <div class="tooltip-section">
+            <strong>Price</strong>
           </div>
+          <div class="tooltip-grid">
+            ${cell('Open', money(b.open))} ${cell('Close', `<span class="${b.close >= b.open ? 'tooltip-positive' : 'tooltip-negative'}">${money(b.close)}</span>`)}
+            ${cell('High', money(b.high))} ${cell('Low', money(b.low))}
+          </div>
+          ${bbMidTooltipSection(b, prev, bars, 'BB Mid')}
           ${measurementHtml(b)}`;
         tooltip.style.display = 'block';
         tooltip.style.left = `${Math.min(window.innerWidth - 460, Math.max(12, clientX + 14))}px`;
@@ -5359,7 +5474,7 @@
         const index = bars.indexOf(b), prev = bars[index - 1];
         const delta = prev ? b.close - prev.close : 0;
         const bbMove = bbMidMoveMeta(b, bars);
-        return `<tr data-workspace-candle="${b.time_key}"><td>${fmtTime(b.time_key)}</td><td>${b.open.toFixed(2)}</td><td>${b.high.toFixed(2)}</td><td>${b.low.toFixed(2)}</td><td>${b.close.toFixed(2)}</td><td>${b.close >= b.open ? 'UP' : 'DOWN'}</td><td>${fmtMoney(delta)}</td><td>${prev ? ((delta / prev.close) * 100).toFixed(2) : '0.00'}%</td><td>${fmtLevel(b.bb_mid)}</td><td class="${bbMove.big ? 'profit' : ''}">${fmtPct(bbMove.move)}</td><td>${fmtPct(bbMove.avg)}</td><td>${fmtLevel(b.vwap)}</td><td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td><td>${b.volume || 0}</td><td>${esc(b.mom_label || b.trend || '')}</td><td>${esc(b.spike || '')}</td></tr>`;
+        return `<tr data-workspace-candle="${b.time_key}"><td>${fmtTime(b.time_key)}</td><td>${b.open.toFixed(2)}</td><td>${b.high.toFixed(2)}</td><td>${b.low.toFixed(2)}</td><td>${b.close.toFixed(2)}</td><td>${b.close >= b.open ? 'UP' : 'DOWN'}</td><td>${fmtMoney(delta)}</td><td>${prev ? ((delta / prev.close) * 100).toFixed(2) : '0.00'}%</td><td>${fmtBbMid(b.bb_mid)}</td><td class="${bbMove.big ? 'profit' : ''}">${fmtPct(bbMove.move)}</td><td>${fmtPct(bbMove.avg)}</td><td>${fmtLevel(b.vwap)}</td><td>${fmtLevel(b.macd_hist)}</td><td>${fmtLevel(b.stoch_rsi_k)}</td><td>${fmtLevel(b.stoch_rsi_d)}</td><td>${b.volume || 0}</td><td>${esc(b.mom_label || b.trend || '')}</td><td>${esc(b.spike || '')}</td></tr>`;
       }).join('')}</tbody></table>`;
       document.querySelectorAll('[data-workspace-candle]').forEach(row => row.addEventListener('click', () => {
         const bar = DATA.bars.find(b => b.time_key === row.dataset.workspaceCandle);
