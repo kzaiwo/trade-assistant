@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_ROOT = (ROOT / "../_trade_data").resolve()
 RESULTS_PATH = ROOT / "results/backtest_summary.json"
 SYMBOLS = ["AAPL", "TSLA", "MU", "INTC"]
-STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close", "mean_reversion"]
+STRATEGY_NAMES = ["bb_squeeze", "bb_breakout", "stoch_cross", "vwap_bounce", "macd_cross", "bb_mid_cross", "bb_mid_change_dir", "bb_mid_trend_rider", "bb_mid_width_check", "bb_mid_cross_chop_guard", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close", "mean_reversion"]
 TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "60m"]
 BARS_CACHE: dict[tuple[str, str, str, str, tuple[int, float, int, int, int, int, int, int, int]], tuple[list[dict], Path]] = {}
 DEFAULT_INDICATOR_SETTINGS = {
@@ -33,10 +33,9 @@ DEFAULT_INDICATOR_SETTINGS = {
 }
 LIVE_STATE = {"active": False, "symbol": "US.INTC", "extended_time": True, "strategy": "bb_mid_cross_1m", "ktype": "1m", "indicator_settings": DEFAULT_INDICATOR_SETTINGS}
 LIVE_LOCK = threading.Lock()
-BB_MID_FLAT_TOLERANCE = 0.001
 BB_MID_FIRST_ENTRY_TIME = "09:45"
 BB_MID_LAST_ENTRY_TIME = "15:10"
-BB_MID_ENTRY_FLAT_TOLERANCE = {
+BB_MID_FLAT_TOLERANCE = {
     "1m": 0.0003,
     "3m": 0.0005,
     "5m": 0.0005,
@@ -44,6 +43,24 @@ BB_MID_ENTRY_FLAT_TOLERANCE = {
     "30m": 0.0008,
     "60m": 0.001,
 }
+BB_MID_ENTRY_FLAT_TOLERANCE = BB_MID_FLAT_TOLERANCE
+BB_MID_WIDTH_THRESHOLDS = {
+    "1m": 0.007,
+    "3m": 0.008,
+    "5m": 0.008,
+    "15m": 0.010,
+    "30m": 0.012,
+    "60m": 0.014,
+}
+BB_MID_CHOP_GUARD_SETTINGS = {
+    "1m": {"lookback": 8, "min_net_move": 0.0006, "min_efficiency": 0.35},
+    "3m": {"lookback": 5, "min_net_move": 0.0008, "min_efficiency": 0.35},
+    "5m": {"lookback": 4, "min_net_move": 0.0010, "min_efficiency": 0.35},
+    "15m": {"lookback": 3, "min_net_move": 0.0015, "min_efficiency": 0.35},
+    "30m": {"lookback": 3, "min_net_move": 0.0018, "min_efficiency": 0.35},
+    "60m": {"lookback": 3, "min_net_move": 0.0020, "min_efficiency": 0.35},
+}
+BB_MID_STRATEGY_BASES = {"bb_mid_cross", "bb_mid_change_dir", "bb_mid_trend_rider", "bb_mid_width_check", "bb_mid_cross_chop_guard", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close"}
 
 
 def _plain_symbol(value: str) -> str:
@@ -177,7 +194,7 @@ def _load_bars(symbol: str, ktype: str, start: str, end: str, indicator_settings
         filtered = _close_labeled_bars(filtered, minutes)
     if not native_timeframe and minutes > 1:
         filtered = _timeframe_bars(filtered, ktype)
-    filtered = _compute_derived_indicators(filtered, settings)
+    filtered = _compute_derived_indicators(filtered, settings, ktype)
     BARS_CACHE[cache_key] = (filtered, files[0])
     return filtered, files[0]
 
@@ -333,17 +350,48 @@ def _bb_mid_slope(bar: dict, prev: dict | None) -> float | None:
     return mid - prev_mid
 
 
-def _bb_mid_flat(bar: dict, prev: dict | None) -> bool:
+def _bb_mid_flat(bar: dict, prev: dict | None, timeframe: str = "1m") -> bool:
     slope = _bb_mid_slope(bar, prev)
     close = _num(bar.get("close"))
-    return slope is not None and close is not None and abs(slope) <= close * BB_MID_FLAT_TOLERANCE
+    tolerance = BB_MID_FLAT_TOLERANCE.get(str(timeframe or "1m"), 0.0005)
+    return slope is not None and close is not None and close != 0 and abs(slope) / abs(close) <= tolerance
 
 
 def _bb_mid_entry_flat(bar: dict, prev: dict | None, timeframe: str) -> bool:
-    slope = _bb_mid_slope(bar, prev)
-    close = _num(bar.get("close"))
-    tolerance = BB_MID_ENTRY_FLAT_TOLERANCE.get(timeframe, 0.0005)
-    return slope is not None and close is not None and abs(slope) / close <= tolerance
+    return _bb_mid_flat(bar, prev, timeframe)
+
+
+def _bb_mid_width_entry_block(bar: dict, prev: dict | None, bars: list[dict], index: int, timeframe: str) -> bool:
+    if not _bb_mid_entry_flat(bar, prev, timeframe):
+        return False
+    width = _bandwidth(bar)
+    if width is None:
+        return False
+    prior = [_bandwidth(bars[i]) for i in range(max(0, index - 20), index)]
+    prior = [value for value in prior if value is not None]
+    avg_width = sum(prior) / len(prior) if prior else None
+    width_ratio = width / avg_width if avg_width and avg_width > 0 else None
+    prev_width = _bandwidth(bars[index - 1]) if index > 0 else None
+    expanding = bool(prev_width is not None and width > prev_width * 1.05)
+    narrow_absolute = width <= BB_MID_WIDTH_THRESHOLDS.get(timeframe, 0.008)
+    narrow_relative = bool(width_ratio is not None and width_ratio <= 0.75)
+    return (narrow_absolute or narrow_relative) and not expanding
+
+
+def _bb_mid_chop_guard_entry_block(bars: list[dict], index: int, timeframe: str) -> bool:
+    settings = BB_MID_CHOP_GUARD_SETTINGS.get(str(timeframe or "1m"), BB_MID_CHOP_GUARD_SETTINGS["3m"])
+    lookback = int(settings["lookback"])
+    if index < lookback:
+        return False
+    window = bars[index - lookback:index + 1]
+    mids = [_num(item.get("bb_mid")) for item in window]
+    close = _num(bars[index].get("close"))
+    if any(mid is None for mid in mids) or close in (None, 0):
+        return False
+    net_move = abs(mids[-1] - mids[0]) / abs(close)
+    total_move = sum(abs(curr - prev) for prev, curr in zip(mids, mids[1:]))
+    efficiency = abs(mids[-1] - mids[0]) / total_move if total_move else 0.0
+    return net_move < float(settings["min_net_move"]) or efficiency < float(settings["min_efficiency"])
 
 
 def _body_side_ratios(bar: dict) -> tuple[float, float]:
@@ -386,13 +434,11 @@ def _is_choppy_around_mid(bars: list[dict], index: int, lookback: int = 8, flip_
     return (flips >= flip_threshold and mostly_flat) or tight_without_expansion
 
 
-def _cold_start_mid_signal(bar: dict, prev: dict | None, bars: list[dict], index: int) -> tuple[str | None, float, str]:
-    if _is_choppy_around_mid(bars, index):
-        return None, 0.0, ""
+def _cold_start_mid_signal(bar: dict, prev: dict | None, bars: list[dict], index: int, timeframe: str) -> tuple[str | None, float, str]:
     close = _num(bar.get("close"))
     mid = _num(bar.get("bb_mid"))
     slope = _bb_mid_slope(bar, prev)
-    if close is None or mid is None or slope is None or _bb_mid_flat(bar, prev):
+    if close is None or mid is None or slope is None or _bb_mid_flat(bar, prev, timeframe):
         return None, 0.0, ""
     slope_strength = abs(slope) / max(abs(close) * 0.0005, 1e-9)
     conf = max(0.3, min(0.5, 0.35 + min(slope_strength, 0.15)))
@@ -414,7 +460,7 @@ def _bb_mid_cross_signal(bar: dict, prev: dict | None, prev_prev: dict | None, b
     prev_slope = _bb_mid_slope(prev, prev_prev) if prev else None
     if slope is None:
         return None, 0.0, ""
-    flat = _bb_mid_flat(bar, prev)
+    flat = _bb_mid_flat(bar, prev, timeframe)
     width = _bandwidth(bar)
     distance = abs(close - mid) / max(abs(mid) * max(width or 0.01, 1e-9), 1e-9)
     slope_strength = abs(slope) / max(abs(close) * 0.0005, 1e-9)
@@ -429,19 +475,24 @@ def _bb_mid_cross_signal(bar: dict, prev: dict | None, prev_prev: dict | None, b
             return "LONG", conf, "Closed across BB mid while BB mid slope turned upward"
         if prev_close > prev_mid and close < mid and turned_down:
             return "SHORT", conf, "Closed across BB mid while BB mid slope turned downward"
-        return _cold_start_mid_signal(bar, prev, bars, index)
+        return _cold_start_mid_signal(bar, prev, bars, index, timeframe)
     body = abs((_num(bar.get("close"), 0) or 0) - (_num(bar.get("open"), 0) or 0))
     atr = _num(bar.get("atr14"))
     prev_above, prev_below = _body_side_ratios(prev)
     above, below = _body_side_ratios(bar)
     crossed_up = prev_close < prev_mid and close > mid
     crossed_down = prev_close > prev_mid and close < mid
-    flat_limit = close * BB_MID_FLAT_TOLERANCE
-    tight_flat = abs(slope) <= close * (BB_MID_FLAT_TOLERANCE * 0.1)
+    flat_limit = close * BB_MID_FLAT_TOLERANCE.get(timeframe, 0.0005)
+    tight_flat = abs(slope) <= flat_limit * 0.1
     prev_flat = bool(prev_slope is not None and abs(prev_slope) <= flat_limit)
     prev_falling = bool(prev_slope is not None and prev_slope < -flat_limit)
     near_mid = abs(close - mid) <= flat_limit
     down_turn_limit = flat_limit * 0.37
+    turn_threshold = flat_limit * 0.1
+    if prev_slope is not None and prev_slope <= turn_threshold and slope >= turn_threshold and close > mid and above >= 0.8:
+        return "LONG", conf, "BB mid turned upward while price held above the midline"
+    if prev_slope is not None and prev_slope >= -turn_threshold and slope <= -turn_threshold and close < mid and below >= 0.8:
+        return "SHORT", conf, "BB mid turned downward while price held below the midline"
     if (prev_falling and flat and near_mid) or (prev_flat and prev_slope <= 0 and slope > 0 and above >= 0.8):
         return "LONG", conf, "BB mid stopped falling with price near or above the midline"
     if prev_flat and prev_slope >= 0 and slope <= -down_turn_limit and below >= 0.8:
@@ -477,7 +528,92 @@ def _bb_mid_cross_signal(bar: dict, prev: dict | None, prev_prev: dict | None, b
         return "LONG", conf, "Majority candle body crossed above BB mid with upward non-flat midline"
     if prev_above > 0.5 and close < mid and below > 0.5 and slope < 0 and not flat:
         return "SHORT", conf, "Majority candle body crossed below BB mid with downward non-flat midline"
-    return _cold_start_mid_signal(bar, prev, bars, index)
+    return _cold_start_mid_signal(bar, prev, bars, index, timeframe)
+
+
+def _bb_mid_change_dir_signal(bar: dict, prev: dict | None) -> tuple[str | None, float, str]:
+    close = _num(bar.get("close"))
+    mid = _num(bar.get("bb_mid"))
+    slope = _bb_mid_slope(bar, prev)
+    prev_slope = _bb_mid_slope(prev, None) if prev else None
+    if close is None or mid is None or slope is None or prev_slope is None:
+        return None, 0.0, ""
+    distance = abs(close - mid) / max(abs(mid) * max(_bandwidth(bar) or 0.01, 1e-9), 1e-9)
+    slope_strength = abs(slope) / max(abs(close) * 0.0005, 1e-9)
+    conf = max(0.1, min(1.0, 0.5 + min(distance, 0.3) + min(slope_strength, 0.2)))
+    if slope > 0 and prev_slope <= 0:
+        return "LONG", conf, "BB mid slope changed direction upward"
+    if slope < 0 and prev_slope >= 0:
+        return "SHORT", conf, "BB mid slope changed direction downward"
+    return None, 0.0, ""
+
+
+def _recent_mid_side_counts(bars: list[dict], index: int, lookback: int = 3) -> tuple[int, int]:
+    above = 0
+    below = 0
+    for item in bars[max(0, index - lookback + 1):index + 1]:
+        close = _num(item.get("close"))
+        mid = _num(item.get("bb_mid"))
+        if close is None or mid is None:
+            continue
+        above += int(close > mid)
+        below += int(close < mid)
+    return above, below
+
+
+def _trend_momentum_ok(bar: dict, prev: dict | None, direction: int) -> bool:
+    hist = _num(bar.get("macd_hist"))
+    prev_hist = _num(prev.get("macd_hist")) if prev else None
+    k = _num(bar.get("stoch_rsi_k"))
+    d = _num(bar.get("stoch_rsi_d"))
+    macd_ok = True
+    if hist is not None:
+        if direction > 0:
+            macd_ok = hist >= 0 and (prev_hist is None or hist >= prev_hist)
+        else:
+            macd_ok = hist <= 0 and (prev_hist is None or hist <= prev_hist)
+    stoch_ok = True
+    if k is not None and d is not None:
+        if direction > 0:
+            stoch_ok = k >= d and k > 35
+        else:
+            stoch_ok = k <= d and k < 65
+    return macd_ok and stoch_ok
+
+
+def _recent_slope_counts(bars: list[dict], index: int, lookback: int = 3) -> tuple[int, int]:
+    up = 0
+    down = 0
+    for i in range(max(0, index - lookback + 1), index + 1):
+        prev = bars[i - 1] if i > 0 else None
+        slope = _bb_mid_slope(bars[i], prev)
+        if slope is None:
+            continue
+        up += int(slope > 0)
+        down += int(slope < 0)
+    return up, down
+
+
+def _bb_mid_trend_rider_signal(bar: dict, prev: dict | None, bars: list[dict], index: int, timeframe: str) -> tuple[str | None, float, str]:
+    if index < 2:
+        return None, 0.0, ""
+    close = _num(bar.get("close"))
+    mid = _num(bar.get("bb_mid"))
+    slope = _bb_mid_slope(bar, prev)
+    if close is None or mid is None or slope is None or _bb_mid_flat(bar, prev, timeframe):
+        return None, 0.0, ""
+    above_count, below_count = _recent_mid_side_counts(bars, index, 3)
+    slope_up_count, slope_down_count = _recent_slope_counts(bars, index, 3)
+    width = _bandwidth(bar)
+    distance = abs(close - mid) / max(abs(mid) * max(width or 0.01, 1e-9), 1e-9)
+    slope_strength = abs(slope) / max(abs(close) * 0.0005, 1e-9)
+    side_bonus = 0.08 if max(above_count, below_count) >= 3 else 0.03
+    conf = max(0.1, min(1.0, 0.52 + min(distance, 0.25) + min(slope_strength, 0.18) + side_bonus))
+    if slope > 0 and close > mid and above_count >= 2 and slope_up_count >= 2 and distance <= 0.5 and _trend_momentum_ok(bar, prev, 1):
+        return "LONG", conf, "Trend rider long: price held above rising BB mid"
+    if slope < 0 and close < mid and below_count >= 2 and slope_down_count >= 2 and distance <= 0.5 and _trend_momentum_ok(bar, prev, -1):
+        return "SHORT", conf, "Trend rider short: price held below falling BB mid"
+    return None, 0.0, ""
 
 
 def _avg_volume(bars: list[dict], index: int, window: int = 20) -> float | None:
@@ -573,7 +709,12 @@ def _signal_components(bar: dict, prev: dict | None, bars: list[dict], index: in
 
 def _fast_signal(strategy_id: str, bar: dict, prev: dict | None, bars: list[dict], index: int) -> tuple[str | None, float, str]:
     base = strategy_id.rsplit("_", 1)[0]
-    if base in {"bb_mid_cross", "bb_mid_2_no_choppy", "bb_mid_no_choppy_exit", "bb_mid_no_choppy_exit_early_close"}:
+    if base == "bb_mid_change_dir":
+        return _bb_mid_change_dir_signal(bar, prev)
+    if base == "bb_mid_trend_rider":
+        timeframe = strategy_id.rsplit("_", 1)[-1]
+        return _bb_mid_trend_rider_signal(bar, prev, bars, index, timeframe)
+    if base in BB_MID_STRATEGY_BASES:
         timeframe = strategy_id.rsplit("_", 1)[-1]
         prev_prev = bars[index - 2] if index >= 2 else None
         return _bb_mid_cross_signal(bar, prev, prev_prev, bars, index, timeframe)
@@ -673,7 +814,7 @@ def _bars_dataframe(bars: list[dict]):
     return pd.DataFrame(bars)
 
 
-def _compute_derived_indicators(bars: list[dict], indicator_settings: dict | None = None) -> list[dict]:
+def _compute_derived_indicators(bars: list[dict], indicator_settings: dict | None = None, timeframe: str = "1m") -> list[dict]:
     if not bars:
         return bars
     settings = _indicator_settings({"indicatorSettings": indicator_settings or {}})
@@ -696,7 +837,8 @@ def _compute_derived_indicators(bars: list[dict], indicator_settings: dict | Non
             prev_mid = _num(out[i - 1].get("bb_mid")) if i else None
             slope = mid - prev_mid if prev_mid is not None else None
             bar["bb_mid_slope"] = round(slope, 6) if slope is not None else None
-            bar["bb_mid_flat"] = bool(slope is not None and abs(slope) <= (closes[i] or 0) * BB_MID_FLAT_TOLERANCE)
+            tolerance = BB_MID_FLAT_TOLERANCE.get(str(timeframe or "1m"), 0.0005)
+            bar["bb_mid_flat"] = bool(slope is not None and closes[i] and abs(slope) / abs(closes[i]) <= tolerance)
             bar["bb_bandwidth"] = round((bar["bb_upper"] - bar["bb_lower"]) / mid, 8) if mid else None
             prev_width = _num(out[i - 1].get("bb_bandwidth")) if i else None
             bar["bb_bandwidth_expanding"] = bool(prev_width is not None and bar["bb_bandwidth"] is not None and bar["bb_bandwidth"] > prev_width)
@@ -855,9 +997,9 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     timeframe = _strategy_timeframe(strategy_id, str(ktype or "1m"))
     stream_minutes = _bars_interval_minutes(bars)
     signal_minutes = _timeframe_minutes(timeframe)
-    signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe), indicator_settings)
+    signal_bars = bars if stream_minutes == signal_minutes else _compute_derived_indicators(_timeframe_bars(bars, timeframe), indicator_settings, timeframe)
     higher_tf = "3m" if signal_minutes <= 1 else "5m"
-    higher_bars = _compute_derived_indicators(_timeframe_bars(bars, higher_tf), indicator_settings)
+    higher_bars = _compute_derived_indicators(_timeframe_bars(bars, higher_tf), indicator_settings, higher_tf)
     price_levels = evaluate_price_levels(_bars_dataframe(signal_bars), timeframe)
     rally_watch = evaluate_rally_watch(
         _bars_dataframe(signal_bars),
@@ -883,7 +1025,11 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     bar = signal_bars[-1]
     prev = signal_bars[-2] if len(signal_bars) > 1 else None
     side, confidence, reason = _fast_signal(strategy_id, bar, prev, signal_bars, len(signal_bars) - 1)
-    if strategy_id.startswith(("bb_mid_2_no_choppy_", "bb_mid_no_choppy_exit_")) and _bb_mid_entry_flat(bar, prev, timeframe):
+    if strategy_id.startswith("bb_mid_width_check_") and _bb_mid_width_entry_block(bar, prev, signal_bars, len(signal_bars) - 1, timeframe):
+        side, confidence, reason = None, 0.0, "Selected strategy is waiting because BB mid is flat and Bollinger bandwidth is tight without expansion."
+    elif strategy_id.startswith("bb_mid_cross_chop_guard_") and _bb_mid_chop_guard_entry_block(signal_bars, len(signal_bars) - 1, timeframe):
+        side, confidence, reason = None, 0.0, "Selected strategy is waiting because recent BB mid movement is choppy."
+    elif strategy_id.startswith(("bb_mid_2_no_choppy_", "bb_mid_no_choppy_exit_")) and _bb_mid_entry_flat(bar, prev, timeframe):
         side, confidence, reason = None, 0.0, "Selected strategy is waiting because BB mid is flat."
     action = side or "WAIT"
     close = _num(bar.get("close"), 0) or 0
@@ -891,7 +1037,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
     stop = close - atr if action == "LONG" else close + atr if action == "SHORT" else None
     target = close + (atr * 2) if action == "LONG" else close - (atr * 2) if action == "SHORT" else None
     state_1m = _live_market_state(bars[-1])
-    bars_5m = _compute_derived_indicators(_timeframe_bars(bars, "5m"), indicator_settings)
+    bars_5m = _compute_derived_indicators(_timeframe_bars(bars, "5m"), indicator_settings, "5m")
     state_5m = _live_market_state(bars_5m[-1]) if bars_5m else "RANGE_BOUND"
     bullish_score = 0
     bearish_score = 0
@@ -922,7 +1068,7 @@ def _live_analysis(symbol: str, bars: list[dict], strategy_id: str = "bb_mid_cro
         "market_state": state_1m,
         "market_regime_1m": state_1m,
         "market_regime_5m": state_5m,
-        "setup": "BB_MID_CROSS" if action in {"LONG", "SHORT"} else "NONE",
+        "setup": "BB_MID_CHANGE_DIR" if base_name == "bb_mid_change_dir" and action in {"LONG", "SHORT"} else "BB_MID_CROSS" if action in {"LONG", "SHORT"} else "NONE",
         "trade_grade": "A" if confidence >= 0.7 else "B" if confidence >= 0.5 else "C" if action != "WAIT" else "F",
         "trade_state": "LIVE",
         "entry_price": close if action in {"LONG", "SHORT"} else None,
@@ -957,10 +1103,13 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
     trades = []
     next_id = start_id
     prev = None
-    is_mid_cross_strategy = strategy_id.startswith("bb_mid_cross_") or strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
+    is_mid_cross_strategy = strategy_id.rsplit("_", 1)[0] in BB_MID_STRATEGY_BASES
     is_mid_no_choppy_strategy = strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
     is_mid_no_choppy_exit_strategy = strategy_id.startswith("bb_mid_no_choppy_exit_")
     is_early_close_strategy = strategy_id.startswith("bb_mid_no_choppy_exit_early_close_")
+    is_mid_width_check_strategy = strategy_id.startswith("bb_mid_width_check_")
+    is_mid_chop_guard_strategy = strategy_id.startswith("bb_mid_cross_chop_guard_")
+    reverse_on_opposite = not is_mid_cross_strategy
     timeframe = strategy_id.rsplit("_", 1)[-1]
     cooldown = 0 if is_mid_cross_strategy else (6 if strategy_id.endswith("_1m") else 3)
     max_trades_per_day = None if is_mid_cross_strategy else (8 if strategy_id.endswith("_1m") else 4)
@@ -1026,15 +1175,16 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             if position is not None and final_bar:
                 close_position(price, time_key, "session_end")
             continue
-        is_mid_cross = strategy_id.startswith("bb_mid_cross_") or strategy_id.startswith("bb_mid_2_no_choppy_") or strategy_id.startswith("bb_mid_no_choppy_exit_")
-        if is_mid_cross and time_key[11:16] > BB_MID_LAST_ENTRY_TIME:
-            if position is not None and final_bar:
-                close_position(price, time_key, "session_end")
+        is_mid_cross = strategy_id.rsplit("_", 1)[0] in BB_MID_STRATEGY_BASES
+        after_last_entry = bool(is_mid_cross and time_key[11:16] > BB_MID_LAST_ENTRY_TIME)
+        if after_last_entry and position is None:
             continue
         if position is None:
             if is_mid_cross and time_key[11:16] < BB_MID_FIRST_ENTRY_TIME:
                 continue
-            if is_mid_cross and not reason.startswith("Initial trend-side") and _is_choppy_around_mid(bars, index):
+            if is_mid_width_check_strategy and _bb_mid_width_entry_block(bar, prev_bar, bars, index, timeframe):
+                continue
+            if is_mid_chop_guard_strategy and _bb_mid_chop_guard_entry_block(bars, index, timeframe):
                 continue
             if is_mid_no_choppy_strategy and _bb_mid_entry_flat(bar, prev_bar, timeframe):
                 continue
@@ -1056,8 +1206,8 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
             }
             continue
         if side == position["side"]:
-            continue
-        if is_mid_cross and reason.startswith("Initial trend-side"):
+            if final_bar:
+                close_position(price, time_key, "session_end")
             continue
         if index - position["entryIndex"] < cooldown:
             continue
@@ -1068,7 +1218,14 @@ def _fast_trades(strategy_id: str, label: str, bars: list[dict], symbol: str, st
         close_position(price, time_key, "opposite_signal")
         if is_mid_no_choppy_strategy and _bb_mid_entry_flat(bar, prev_bar, timeframe):
             continue
-        if not final_bar and (max_trades_per_day is None or trades_by_day.get(day, 0) < max_trades_per_day):
+        if is_mid_width_check_strategy and _bb_mid_width_entry_block(bar, prev_bar, bars, index, timeframe):
+            continue
+        if is_mid_chop_guard_strategy and _bb_mid_chop_guard_entry_block(bars, index, timeframe):
+            continue
+        if not reverse_on_opposite:
+            continue
+        before_first_entry = bool(is_mid_cross and time_key[11:16] < BB_MID_FIRST_ENTRY_TIME)
+        if not final_bar and not before_first_entry and not after_last_entry and (max_trades_per_day is None or trades_by_day.get(day, 0) < max_trades_per_day):
             position = {
                 "side": side,
                 "entry": price,
@@ -1092,6 +1249,10 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": "VWAP Bounce",
         "macd_cross": "MACD Cross",
         "bb_mid_cross": "Bollinger Midline Cross",
+        "bb_mid_change_dir": "Bollinger Midline Change Direction",
+        "bb_mid_trend_rider": "Bollinger Midline Trend Rider",
+        "bb_mid_width_check": "Bollinger Midline Width Check",
+        "bb_mid_cross_chop_guard": "Bollinger Midline Cross Chop Guard",
         "bb_mid_2_no_choppy": "Bollinger Midline Cross No Choppy",
         "bb_mid_no_choppy_exit": "Bollinger Midline Cross No Choppy Exit",
         "bb_mid_no_choppy_exit_early_close": "Bollinger Midline Cross No Choppy Exit Early Close",
@@ -1103,7 +1264,11 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "stoch_cross": "Trades StochRSI K/D crosses from oversold or overbought zones.",
         "vwap_bounce": "Trades VWAP reclaim or rejection only when volume confirms the move.",
         "macd_cross": "Trades MACD line/signal crossovers confirmed by histogram direction.",
-        "bb_mid_cross": "Trades BB middle-line crosses only when the midline direction confirms and anti-chop filters allow entry.",
+        "bb_mid_cross": "Trades BB middle-line signals only when the midline direction confirms.",
+        "bb_mid_change_dir": "Trades BB middle-line slope direction changes without requiring price to cross BB mid.",
+        "bb_mid_trend_rider": "Rides directional moves while price keeps respecting a non-flat BB middle line.",
+        "bb_mid_width_check": "Same BB middle-line strategy, but blocks fresh entries when BB mid is flat and band width is tight without expansion.",
+        "bb_mid_cross_chop_guard": "Same BB middle-line strategy, but blocks fresh entries when recent BB mid movement is inefficient.",
         "bb_mid_2_no_choppy": "Same BB middle-line strategy, but blocks new entries when BB mid is flat while still allowing exits.",
         "bb_mid_no_choppy_exit": "Same BB middle-line strategy, but blocks both new entries and opposite exits while BB mid is flat.",
         "bb_mid_no_choppy_exit_early_close": "Same no-choppy-exit strategy, but closes open positions 15 minutes before the selected session ends.",
@@ -1115,7 +1280,11 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "stoch_cross": "Looks for StochRSI K crossing D below 20 for longs or above 80 for shorts. Signals outside those zones are ignored.",
         "vwap_bounce": "Looks for price reclaiming VWAP for longs or rejecting VWAP for shorts, with current volume at least 1.05x the recent average.",
         "macd_cross": "Looks for MACD crossing above signal with positive histogram for longs, or crossing below signal with negative histogram for shorts.",
-        "bb_mid_cross": "Looks for price crossing the Bollinger middle line with BB mid slope confirmation. It blocks repeated flat midline flips and tight bandwidth unless bands are expanding.",
+        "bb_mid_cross": "Looks for price crossing or aligning with the Bollinger middle line with BB mid slope confirmation.",
+        "bb_mid_change_dir": "Looks for the Bollinger middle line itself changing direction. It does not require the candle close or body to cross BB mid.",
+        "bb_mid_trend_rider": "Looks for price holding the trend side of a non-flat BB midline with MACD/StochRSI not fighting the move.",
+        "bb_mid_width_check": "Uses BB midline cross logic, then blocks new entries only when BB mid is flat and Bollinger bandwidth is narrow without expansion.",
+        "bb_mid_cross_chop_guard": "Uses BB midline cross logic, then blocks new entries when recent BB mid net movement or efficiency is too low.",
         "bb_mid_2_no_choppy": "Uses the BB midline cross logic, then skips fresh entries when BB mid slope is flat for the selected timeframe. Existing positions can still exit on opposite signals.",
         "bb_mid_no_choppy_exit": "Uses the BB midline cross logic, then skips fresh entries and ignores opposite exits when BB mid slope is flat for the selected timeframe.",
         "bb_mid_no_choppy_exit_early_close": "Uses the no-choppy-exit logic, then forces any open position closed 15 minutes before the selected session's last bar.",
@@ -1127,7 +1296,11 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "stoch_cross": ["Entry rules: buy when StochRSI K crosses above D in the oversold zone; sell when K crosses below D in the overbought zone.", "Exit rules: close or reverse when an opposite StochRSI zone crossover appears after cooldown.", "Filters: ignores crosses outside the oversold or overbought zones and uses cooldown.", "Best conditions: works best after sharp intraday extensions that start to mean revert.", "Weaknesses: can fire early in strong trends where overbought or oversold stays pinned."],
         "vwap_bounce": ["Entry rules: buy when price reclaims VWAP from below on confirming volume; sell when price rejects VWAP from above on confirming volume.", "Exit rules: close or reverse when the opposite VWAP reclaim or rejection appears after cooldown.", "Filters: requires current volume above the rolling average volume threshold and uses cooldown.", "Best conditions: works best when VWAP is acting as an intraday control level.", "Weaknesses: can be noisy around VWAP when volume is uneven or price is range-bound."],
         "macd_cross": ["Entry rules: buy when MACD crosses above signal with positive histogram; sell when MACD crosses below signal with negative histogram.", "Exit rules: close or reverse when the opposite MACD crossover appears after cooldown.", "Filters: requires histogram to confirm the crossover direction and uses cooldown.", "Best conditions: works best when momentum is cleanly shifting after consolidation.", "Weaknesses: lags fast reversals and can whipsaw in low-volatility chop."],
-        "bb_mid_cross": ["Entry rules: when no position is open, enter long if the close is above BB mid and BB mid is sloping up; enter short if the close is below BB mid and BB mid is sloping down.", "Entry rules: when a position is open, close and reverse on the opposite BB mid cross with slope confirmation.", "Filters: do not open a new position before 09:45.", "Filters: if BB mid is flat on the current candle, wait for the next candle.", "Filters: blocks fresh entries during repeated flat midline flips and tight bandwidth unless bands are expanding; no cooldown or daily trade cap is applied.", "Best conditions: works best when price is rotating through BB mid as a new directional move starts.", "Weaknesses: can still whipsaw near the midline if slope changes are tiny and volatility has not expanded."],
+        "bb_mid_cross": ["Entry rules: when no position is open, enter long if the close is above BB mid and BB mid is sloping up; enter short if the close is below BB mid and BB mid is sloping down.", "Entry rules: when a position is open, close and reverse on the opposite BB mid cross with slope confirmation.", "Filters: do not open a new position before 09:45.", "Filters: if BB mid is flat on the current candle, wait for the next candle.", "Filters: no cooldown or daily trade cap is applied.", "Best conditions: works best when price is rotating through BB mid as a new directional move starts.", "Weaknesses: can still whipsaw near the midline if slope changes are tiny and volatility has not expanded."],
+        "bb_mid_change_dir": ["Entry rules: buy when BB mid slope changes from falling or flat to rising; sell when BB mid slope changes from rising or flat to falling.", "Exit rules: close and reverse when BB mid slope changes to the opposite direction.", "Filters: does not require candle close, full candle body, or majority body to cross BB mid.", "Filters: do not open a new position before 09:45.", "Filters: no cooldown or daily trade cap is applied.", "Best conditions: works best when the BB midline turn leads the price move.", "Weaknesses: can flip early if BB mid wiggles before price confirms."],
+        "bb_mid_trend_rider": ["Entry rules: buy when BB mid is rising and at least 2 of the last 3 closes held above BB mid.", "Entry rules: sell when BB mid is falling and at least 2 of the last 3 closes held below BB mid.", "Momentum filter: MACD histogram or StochRSI must not be fighting the trade direction.", "Exit rules: close and reverse when the opposite trend-side state appears.", "Best conditions: works best when price respects BB mid during a clean intraday trend.", "Weaknesses: can enter late after a move has already stretched away from BB mid."],
+        "bb_mid_width_check": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: block a new position when BB mid is flat and Bollinger bandwidth is narrow without expanding.", "Exit rules: existing positions may still close on opposite BB midline signals even during tight bandwidth.", "Width filter: BB width percent is (upper band - lower band) / BB mid, compared to absolute thresholds and recent average width.", "Best conditions: helps avoid midline-cross churn inside tight squeezes.", "Weaknesses: can skip early entries that begin before the bands visibly expand."],
+        "bb_mid_cross_chop_guard": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: block a new position when recent BB mid net movement is too small or the efficiency ratio is too low.", "Exit rules: existing positions may still close on opposite BB midline signals even when chop guard is active.", "Chop check: efficiency is net BB mid movement divided by total absolute BB mid movement over the lookback.", "Best conditions: helps avoid repeated entries when BB mid wiggles without making progress.", "Weaknesses: can skip early turns that start after a compressed or back-and-forth midline."],
         "bb_mid_2_no_choppy": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit rules: existing positions may still close on opposite BB midline signals even when BB mid is flat.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: helps compare whether skipping flat-mid entries reduces whipsaw on choppy days.", "Weaknesses: may miss profitable early turns that begin while BB mid is still flattening."],
         "bb_mid_no_choppy_exit": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit filter: if BB mid slope is flat, ignore opposite signals and keep holding the current position.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: tests whether holding through flat-mid noise improves trend capture.", "Weaknesses: may hold losers longer when the flat period is a real reversal forming."],
         "bb_mid_no_choppy_exit_early_close": ["Entry rules: uses the same BB midline signals as Bollinger Midline Cross.", "Fresh-entry filter: if BB mid slope is flat for the selected timeframe, do not open a new position.", "Exit filter: if BB mid slope is flat, ignore opposite signals and keep holding the current position.", "Time exit: close any open position 15 minutes before the selected session ends.", "Flat thresholds: 1m 0.03%, 3m/5m 0.05%, 15m/30m 0.08%, 60m 0.10% of close per candle.", "Best conditions: compares whether avoiding the final 15 minutes reduces close-driven noise.", "Weaknesses: can miss late trend continuation into the close."],
@@ -1140,6 +1313,10 @@ def _run_fast_dashboard_strategies(bars: list[dict], symbol: str, ktype: str = "
         "vwap_bounce": [["VWAP reclaim/reject", "Previous close was below VWAP, current close reclaims VWAP on volume.", "Previous close was above VWAP, current close rejects VWAP on volume."]],
         "macd_cross": [["MACD crossover", "MACD crosses above signal and histogram is positive.", "MACD crosses below signal and histogram is negative."]],
         "bb_mid_cross": [["BB midline cross", "Close crosses above BB mid with midline slope turning up on 1m, or majority body above BB mid with rising non-flat midline on higher timeframes.", "Close crosses below BB mid with midline slope turning down on 1m, or majority body below BB mid with falling non-flat midline on higher timeframes."]],
+        "bb_mid_change_dir": [["BB mid direction change", "BB mid slope changes from falling or flat to rising; no price cross required.", "BB mid slope changes from rising or flat to falling; no price cross required."]],
+        "bb_mid_trend_rider": [["BB mid trend state", "BB mid is rising, price holds above BB mid, and momentum is not bearish.", "BB mid is falling, price holds below BB mid, and momentum is not bullish."]],
+        "bb_mid_width_check": [["BB midline cross + width filter", "Same long signal as BB midline cross, skipped for new entries when BB mid is flat and width is tight without expansion.", "Same short signal as BB midline cross, skipped for new entries when BB mid is flat and width is tight without expansion."]],
+        "bb_mid_cross_chop_guard": [["BB midline cross + chop guard", "Same long signal as BB midline cross, skipped for new entries when recent BB mid movement is inefficient.", "Same short signal as BB midline cross, skipped for new entries when recent BB mid movement is inefficient."]],
         "bb_mid_2_no_choppy": [["BB midline cross + flat-entry block", "Same long signal as BB midline cross, skipped for new entries when BB mid is flat.", "Same short signal as BB midline cross, skipped for new entries when BB mid is flat."]],
         "bb_mid_no_choppy_exit": [["BB midline cross + flat hold block", "Same long signal as BB midline cross, skipped for new entries and ignored for exits when BB mid is flat.", "Same short signal as BB midline cross, skipped for new entries and ignored for exits when BB mid is flat."]],
         "bb_mid_no_choppy_exit_early_close": [["BB midline cross + flat hold + early close", "Same long signal as no-choppy-exit, with open positions closed 15 minutes before session end.", "Same short signal as no-choppy-exit, with open positions closed 15 minutes before session end."]],

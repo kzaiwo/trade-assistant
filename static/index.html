@@ -1791,6 +1791,21 @@
       const preferred = `bb_mid_cross_${timeframe}`;
       return DATA.strategies.some(s => s.id === preferred) ? preferred : `bb_mid_cross_${timeframe}`;
     };
+    const isBbMidStrategyId = id => String(id || '').startsWith('bb_mid_');
+    function strategyOptionsHtml(strategies = DATA.strategies) {
+      const bbMid = [];
+      const other = [];
+      (strategies || []).forEach(strategy => (isBbMidStrategyId(strategy.id) ? bbMid : other).push(strategy));
+      const option = s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`;
+      return [
+        other.length ? `<optgroup label="Core Strategies">${other.map(option).join('')}</optgroup>` : '',
+        bbMid.length ? `<optgroup label="BB Mid Experiments">${bbMid.map(option).join('')}</optgroup>` : ''
+      ].join('');
+    }
+    function renderStrategyOptions() {
+      strategySelect.innerHTML = strategyOptionsHtml(DATA.strategies);
+      strategySelect.value = currentStrategyId;
+    }
     function safeJson(text, fallback) {
       try {
         return JSON.parse(text || '');
@@ -1818,7 +1833,7 @@
     const savedOpenAiKeyKey = 'codex_dashboard_openai_api_key';
     const savedAskGptKey = 'codex_dashboard_saved_ask_gpt';
     function emptyBacktestPayload() {
-      const strategyNames = ['bb_squeeze', 'bb_breakout', 'stoch_cross', 'vwap_bounce', 'macd_cross', 'bb_mid_cross', 'bb_mid_2_no_choppy', 'bb_mid_no_choppy_exit', 'bb_mid_no_choppy_exit_early_close', 'mean_reversion'];
+      const strategyNames = ['bb_squeeze', 'bb_breakout', 'stoch_cross', 'vwap_bounce', 'macd_cross', 'bb_mid_cross', 'bb_mid_change_dir', 'bb_mid_trend_rider', 'bb_mid_width_check', 'bb_mid_cross_chop_guard', 'bb_mid_2_no_choppy', 'bb_mid_no_choppy_exit', 'bb_mid_no_choppy_exit_early_close', 'mean_reversion'];
       const strategies = ['1m', '3m', '5m', '15m', '30m', '60m'].flatMap(timeframe => strategyNames.map(name => {
         const id = `${name}_${timeframe}`;
         const label = titleize(name);
@@ -1912,7 +1927,7 @@
         pnl: perSharePnl,
         pnlTotal: pnl,
         pnlPct: Number(trade.pnl_pct || 0),
-        reason: 'opposite_signal',
+        reason: trade.reason || 'opposite_signal',
         entryReason,
         raw: trade
       };
@@ -2307,8 +2322,7 @@
         liveZoomStart = Math.max(0, 1 - liveZoomWidth);
       }
       currentStrategyId = DATA.defaultStrategy || DATA.strategies[0].id;
-      strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
-      strategySelect.value = currentStrategyId;
+      renderStrategyOptions();
       daySelect.innerHTML = DATA.days.map(d => `<option value="${d}">${d}</option>`).join('');
       currentDay = DATA.days[DATA.days.length - 1];
       if (restored.day && DATA.days.includes(restored.day)) currentDay = restored.day;
@@ -2497,8 +2511,7 @@
       const priorStrategyId = options.preferredStrategyId || currentStrategyId;
       DATA = normalizeBacktestPayload(payload);
       currentStrategyId = preferredStrategyId(priorStrategyId, DATA.strategies, fetchTimeframe.value) || DATA.defaultStrategy || DATA.strategies[0].id;
-      strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
-      strategySelect.value = currentStrategyId;
+      renderStrategyOptions();
       daySelect.innerHTML = DATA.days.map(d => `<option value="${d}">${d}</option>`).join('');
       currentDay = DATA.days[DATA.days.length - 1];
       daySelect.value = currentDay;
@@ -2627,6 +2640,10 @@
       const timeframe = fetchTimeframe.value || DATA.bar_interval || '1m';
       const hasTimedStrategies = (DATA.strategies || []).some(strategy => String(strategy.id || '').endsWith(`_${timeframe}`));
       const hasFullStrategySet = (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_cross_'))
+        && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_change_dir_'))
+        && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_trend_rider_'))
+        && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_width_check_'))
+        && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_cross_chop_guard_'))
         && (DATA.strategies || []).some(strategy => String(strategy.id || '').startsWith('bb_mid_no_choppy_exit_'));
       if (hasTimedStrategies && hasFullStrategySet) return;
       try {
@@ -2636,8 +2653,7 @@
         DATA.strategies = payload.strategies;
         DATA.defaultStrategy = preferredStrategyId(previous, DATA.strategies, timeframe) || payload.defaultStrategy || DATA.strategies[0].id;
         currentStrategyId = DATA.defaultStrategy;
-        strategySelect.innerHTML = DATA.strategies.map(s => `<option value="${s.id}">${s.label}</option>`).join('');
-        strategySelect.value = currentStrategyId;
+        renderStrategyOptions();
         updateHeaderStatus();
       } catch (error) {
         console.warn('Could not load strategy list for live mode.', error);

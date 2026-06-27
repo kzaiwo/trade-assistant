@@ -22,37 +22,51 @@ class BacktestRunner(Runner):
             results = self.strategy.run(bars)
             position: Position | None = None
             trades: list[TradeResult] = []
-            for row in results.itertuples():
+
+            def close_position(row, reason: str) -> None:
+                nonlocal position
+                if position is None:
+                    return
+                pnl = self._pnl(position.direction, position.entry_price, float(row.close), position.shares)
+                trade = TradeResult(
+                    symbol=symbol,
+                    entry_time=position.entry_time,
+                    exit_time=row.time_key.to_pydatetime(),
+                    direction=position.direction,
+                    entry_price=position.entry_price,
+                    exit_price=float(row.close),
+                    shares=position.shares,
+                    notional_at_entry=position.notional_at_entry,
+                    confidence_at_entry=position.confidence_at_entry,
+                    pnl=pnl,
+                    pnl_pct=pnl / position.notional_at_entry * 100 if position.notional_at_entry else 0.0,
+                    strategy_name=self.strategy.name,
+                    signal_results_at_entry=position.signal_results_at_entry,
+                    reason=reason,
+                )
+                trades.append(trade)
+                all_trades.append(trade)
+                if self.journal:
+                    self.journal.log_trade(trade)
+                position = None
+
+            rows = list(results.itertuples())
+            for index, row in enumerate(rows):
                 result = row.strategy_result
+                final_bar = index == len(rows) - 1 or row.time_key.date() != rows[index + 1].time_key.date()
                 if result.direction != SignalDirection.NEUTRAL and self.journal:
                     self.journal.log_signal(symbol, result, row.time_key, row.close, self.strategy.name)
                 if position is not None and hasattr(self.strategy, "force_exit") and self.strategy.force_exit(row):
-                    pnl = self._pnl(position.direction, position.entry_price, float(row.close), position.shares)
-                    trade = TradeResult(
-                        symbol=symbol,
-                        entry_time=position.entry_time,
-                        exit_time=row.time_key.to_pydatetime(),
-                        direction=position.direction,
-                        entry_price=position.entry_price,
-                        exit_price=float(row.close),
-                        shares=position.shares,
-                        notional_at_entry=position.notional_at_entry,
-                        confidence_at_entry=position.confidence_at_entry,
-                        pnl=pnl,
-                        pnl_pct=pnl / position.notional_at_entry * 100 if position.notional_at_entry else 0.0,
-                        strategy_name=self.strategy.name,
-                        signal_results_at_entry=position.signal_results_at_entry,
-                    )
-                    trades.append(trade)
-                    all_trades.append(trade)
-                    if self.journal:
-                        self.journal.log_trade(trade)
-                    position = None
+                    close_position(row, "session_end_early")
                     continue
                 if result.direction == SignalDirection.NEUTRAL:
+                    if position is not None and final_bar:
+                        close_position(row, "session_end")
                     continue
                 if position is None:
                     if hasattr(self.strategy, "allows_entry") and not self.strategy.allows_entry(row, result):
+                        continue
+                    if final_bar:
                         continue
                     shares = self._shares_for_notional(float(row.close))
                     position = Position(
@@ -71,29 +85,16 @@ class BacktestRunner(Runner):
                     continue
                 if result.direction != position.direction:
                     if hasattr(self.strategy, "allows_exit") and not self.strategy.allows_exit(row, result):
+                        if final_bar:
+                            close_position(row, "session_end")
                         continue
-                    pnl = self._pnl(position.direction, position.entry_price, float(row.close), position.shares)
-                    trade = TradeResult(
-                        symbol=symbol,
-                        entry_time=position.entry_time,
-                        exit_time=row.time_key.to_pydatetime(),
-                        direction=position.direction,
-                        entry_price=position.entry_price,
-                        exit_price=float(row.close),
-                        shares=position.shares,
-                        notional_at_entry=position.notional_at_entry,
-                        confidence_at_entry=position.confidence_at_entry,
-                        pnl=pnl,
-                        pnl_pct=pnl / position.notional_at_entry * 100 if position.notional_at_entry else 0.0,
-                        strategy_name=self.strategy.name,
-                        signal_results_at_entry=position.signal_results_at_entry,
-                    )
-                    trades.append(trade)
-                    all_trades.append(trade)
-                    if self.journal:
-                        self.journal.log_trade(trade)
+                    close_position(row, "opposite_signal")
+                    if not getattr(self.strategy, "reverse_on_opposite", True):
+                        continue
                     if hasattr(self.strategy, "allows_entry") and not self.strategy.allows_entry(row, result):
                         position = None
+                        continue
+                    if final_bar:
                         continue
                     shares = self._shares_for_notional(float(row.close))
                     position = Position(
@@ -107,6 +108,9 @@ class BacktestRunner(Runner):
                         strategy_name=self.strategy.name,
                         signal_results_at_entry=result.signal_results,
                     )
+                    continue
+                if position is not None and final_bar:
+                    close_position(row, "session_end")
             summary["per_symbol"][symbol] = self._summarize_trades(trades)
         summary["overall"] = self._summarize_overall(all_trades)
         return summary

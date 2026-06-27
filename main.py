@@ -8,11 +8,11 @@ from data.file_loader import FileLoader
 from journal.logger import TradeJournal
 from runner.backtest import BacktestRunner
 from signals.bb_squeeze import BBSqueeze
-from signals.bb_mid_cross import BBMidCross
+from signals.bb_mid_cross import BBMidChangeDir, BBMidCross, BBMidTrendRider
 from signals.macd_cross import MACDCross
 from signals.stoch_cross import StochCross
 from signals.vwap_bounce import VWAPBounce
-from strategies.bb_mid_cross import BBMidCrossStrategy, BBMidNoChoppyExitEarlyCloseStrategy, BBMidNoChoppyExitStrategy, BBMidNoChoppyStrategy
+from strategies.bb_mid_cross import BBMidChangeDirStrategy, BBMidCrossChopGuardStrategy, BBMidCrossStrategy, BBMidNoChoppyExitEarlyCloseStrategy, BBMidNoChoppyExitStrategy, BBMidNoChoppyStrategy, BBMidTrendRiderStrategy, BBMidWidthCheckStrategy
 from strategies.mean_reversion import MeanReversion, SignalStrategy
 
 
@@ -27,6 +27,10 @@ def build_strategies(names: list[str] | None = None, timeframes: list[str] | Non
         available[f"vwap_bounce_{timeframe}"] = SignalStrategy(VWAPBounce(timeframe=timeframe))
         available[f"macd_cross_{timeframe}"] = SignalStrategy(MACDCross(timeframe=timeframe))
         available[f"bb_mid_cross_{timeframe}"] = BBMidCrossStrategy(timeframe=timeframe)
+        available[f"bb_mid_change_dir_{timeframe}"] = BBMidChangeDirStrategy(timeframe=timeframe)
+        available[f"bb_mid_trend_rider_{timeframe}"] = BBMidTrendRiderStrategy(timeframe=timeframe)
+        available[f"bb_mid_width_check_{timeframe}"] = BBMidWidthCheckStrategy(timeframe=timeframe)
+        available[f"bb_mid_cross_chop_guard_{timeframe}"] = BBMidCrossChopGuardStrategy(timeframe=timeframe)
         available[f"bb_mid_2_no_choppy_{timeframe}"] = BBMidNoChoppyStrategy(timeframe=timeframe)
         available[f"bb_mid_no_choppy_exit_{timeframe}"] = BBMidNoChoppyExitStrategy(timeframe=timeframe)
         available[f"bb_mid_no_choppy_exit_early_close_{timeframe}"] = BBMidNoChoppyExitEarlyCloseStrategy(timeframe=timeframe)
@@ -42,6 +46,10 @@ def build_strategies(names: list[str] | None = None, timeframes: list[str] | Non
                 available[f"vwap_bounce_{timeframe}"],
                 available[f"macd_cross_{timeframe}"],
                 available[f"bb_mid_cross_{timeframe}"],
+                available[f"bb_mid_change_dir_{timeframe}"],
+                available[f"bb_mid_trend_rider_{timeframe}"],
+                available[f"bb_mid_width_check_{timeframe}"],
+                available[f"bb_mid_cross_chop_guard_{timeframe}"],
                 available[f"bb_mid_2_no_choppy_{timeframe}"],
                 available[f"bb_mid_no_choppy_exit_{timeframe}"],
                 available[f"bb_mid_no_choppy_exit_early_close_{timeframe}"],

@@ -89,6 +89,7 @@ class TradeResult:
     pnl_pct: float
     strategy_name: str
     signal_results_at_entry: list[SignalResult] = field(default_factory=list)
+    reason: str = "opposite_signal"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +105,7 @@ class TradeResult:
             "pnl": round(float(self.pnl), 6),
             "pnl_pct": round(float(self.pnl_pct), 6),
             "strategy_name": self.strategy_name,
+            "reason": self.reason,
             "signal_results_at_entry": [
                 s.to_dict() for s in self.signal_results_at_entry
             ],
